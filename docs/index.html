@@ -136,6 +136,8 @@ textarea.summary { width: 100%; min-height: 120px; font: 12px var(--f-data); col
 .pxform .row { gap: 6px; }
 .pxform input { width: 7.5em; }
 .pxform button { font-size: 13px; padding: 6px 10px; }
+.group-note { font-size: 13px; line-height: 1.5; color: var(--muted); padding: 2px 2px 4px; }
+.group-note b { color: var(--ink); }
 </style></head><body><div class="app">
   <aside class="panel" aria-label="Datasets">
     <div class="panel-head">
@@ -1253,8 +1255,12 @@ textarea.summary { width: 100%; min-height: 120px; font: 12px var(--f-data); col
       `<button type="submit" class="primary">Use this value</button></div>` +
       `<p class="hint">Cell spacing suggests about ${np.estimate} µm. Not sure? <button type="button" class="linkish" data-estimate="1">Use the estimate</button>: results are then also recomputed at ±20% and fragile findings are flagged.</p></form>`;
   }
+  const REF_NOTE = `<li class="group-note"><b>Public reference</b>: 218 patients from three published studies, all measured with the same recipe. ` +
+    `IMMUcan: imaging mass cytometry of 179 tumors across 5 cancer types. CODEX: 35 colorectal cancers (Schürch et al. 2020). ` +
+    `SPATCH: one colon, ovarian and liver tumor each, imaged on several platforms (too few patients for summary findings, shown for comparison). ` +
+    `Only per-patient summary numbers are included, not the cell data.</li>`;
   function renderPanel() {
-    $("#dsets").innerHTML = DS.map((d) => {
+    $("#dsets").innerHTML = REF_NOTE + DS.map((d) => {
       const [cls, txt] = STATUS_CHIP[d.status];
       const box = `<input type="checkbox" id="sel-${esc(d.id)}" data-id="${esc(d.id)}"${selected.has(d.id) ? " checked" : ""}${d.status !== "ready" ? " disabled" : ""}>`;
       let body = "";
@@ -1321,12 +1327,12 @@ textarea.summary { width: 100%; min-height: 120px; font: 12px var(--f-data); col
     let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(metricLabel(m))}">`;
     for (const t of niceTicks(lo, hi, 4)) svg += `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="var(--line)" stroke-width="${t === 0 ? 1.6 : 0.9}"/>` +
       `<text x="${L - 6}" y="${y(t) + 4}" text-anchor="end" font-size="12" fill="var(--muted)" font-family="var(--f-data)">${t}</text>`;
-    cols.forEach(([d, v], i) => {
+    cols.forEach(([d, v], i) => {  // median line first, so the patient dots sit on top of it
       const cx = L + cw * (i + 0.5), loaded = d.kind === "loaded";
-      v.forEach((val, j) => { const jit = ((j * 0.6180339887) % 1 - 0.5) * cw * 0.5;
-        svg += `<circle cx="${(cx + jit).toFixed(1)}" cy="${y(val).toFixed(1)}" r="${loaded ? 3.8 : 2.8}" fill="${d.color}" fill-opacity="${loaded ? 0.9 : 0.55}"/>`; });
       const md = quant(v, 0.5);
-      svg += `<line x1="${cx - cw * 0.32}" x2="${cx + cw * 0.32}" y1="${y(md)}" y2="${y(md)}" stroke="${loaded ? d.color : "var(--ref-strong)"}" stroke-width="2.6"/>`;
+      svg += `<line x1="${cx - cw * 0.32}" x2="${cx + cw * 0.32}" y1="${y(md)}" y2="${y(md)}" stroke="${loaded ? d.color : "var(--ref-strong)"}" stroke-width="2.6" stroke-opacity="0.8"/>`;
+      v.forEach((val, j) => { const jit = ((j * 0.6180339887) % 1 - 0.5) * cw * 0.5;
+        svg += `<circle cx="${(cx + jit).toFixed(1)}" cy="${y(val).toFixed(1)}" r="${loaded ? 3.8 : 2.8}" fill="${d.color}" fill-opacity="${loaded ? 0.9 : 0.6}"/>`; });
       const words = String(d.short).split(" ");
       svg += `<text x="${cx}" y="${H - B + 18}" text-anchor="middle" font-size="12" fill="${loaded ? d.color : "var(--muted)"}" font-family="var(--f-body)">${esc(words[0])}</text>`;
       if (words.length > 1) svg += `<text x="${cx}" y="${H - B + 33}" text-anchor="middle" font-size="12" fill="var(--muted)" font-family="var(--f-body)">${esc(words.slice(1).join(" "))}</text>`;

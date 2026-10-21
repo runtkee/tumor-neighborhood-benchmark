@@ -136,3 +136,5 @@ textarea.summary { width: 100%; min-height: 120px; font: 12px var(--f-data); col
 .pxform .row { gap: 6px; }
 .pxform input { width: 7.5em; }
 .pxform button { font-size: 13px; padding: 6px 10px; }
+.group-note { font-size: 13px; line-height: 1.5; color: var(--muted); padding: 2px 2px 4px; }
+.group-note b { color: var(--ink); }
