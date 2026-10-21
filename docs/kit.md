@@ -35,7 +35,6 @@ Per-patient summary tables from IMMUcan (179 patients), CODEX CRC (35) and SPATC
 ## Not yet supported
 - HALO object-data export importer (needs a sample file).
 - Steinbock/Hyperion folders (convert to CSV or h5ad first).
-- An interactive mapping screen in the Python kit (the browser version below has one).
 
 ## Browser version (no setup): Tumor Neighborhood Benchmark
 - **Standalone file:** `web/dist/tumor-neighborhood-benchmark.html` (6.6 MB). Opens from disk in any browser and works offline. Its Content-Security-Policy blocks every network request, so the browser itself prevents data from leaving.
@@ -43,6 +42,7 @@ Per-patient summary tables from IMMUcan (179 patients), CODEX CRC (35) and SPATC
 - Source: `web/recipe.js` (port of recipe v2p.1), `web/app.js`, `web/app.css`, `web/body.html`. Build with `uv run python web/build.py`; it writes `docs/index.html`.
 - **Parity:** `analysis/parity_check.py <manifest>` runs Python and JS on the same CSV. CODEX (1,311 values) and IMMUcan (5,655 values) match to ≤1e-12. `tests/test_parity.py` keeps them in sync.
 - CSV input and the protein recipe only. RNA data stays with the Python kit.
+- Mapping is automatic (`web/automap.js`) and read-only; see README "How files are read". The Python kit keeps reviewed manifests for the reference datasets.
 
 ## Validation and size (browser version)
 - `runChecks` in `web/recipe.js` returns `[check, pass|warn|fail, what we found, how to fix]`. Any fail blocks the comparison unless the user forces it, and forced runs are flagged on the results.

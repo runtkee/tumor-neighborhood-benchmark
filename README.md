@@ -8,23 +8,32 @@ Compare a tumor-imaging cell table with 218 public patients on a fixed set of ne
 
 **Open it:** https://runtkee.github.io/tumor-neighborhood-benchmark/
 
-The page opens with a public example loaded. Drop in your own CSV or tab-separated files, check the guessed column mapping, run the checks, and compare.
+The page opens with the public datasets in the left panel, each with its summary findings. Add your own cell table (one or several files) and it is read automatically, checked, analysed, and listed next to them. Tick datasets to compare them side by side.
 
-## Your data stays on your computer
+## Loaded data stays on your computer
 - The page computes everything inside your browser tab. It has no server component.
 - Its Content-Security-Policy (first lines of `docs/index.html`) forbids all network connections, so the browser itself blocks any attempt to send data out.
 - For offline use, save `docs/index.html` and open it from disk.
 - The optional summary export holds per-patient effect sizes with random patient codes. The key linking codes to patients stays with you.
 
-## Input
-One row per cell, from one or several files (e.g. one per slide). Supported:
-- **Cell type:** a label column, or HALO-style marker positivity flags with ordered rules (e.g. T cell = CD3 positive; neutrophil subset = CD66b and LOX-1 positive).
-- **Position:** centroid columns, or bounding boxes (`XMin`/`XMax`).
-- **Patient / image IDs:** taken from a column or the file name, either whole, the text before a separator, or a regular-expression match.
-- **Formats:** comma, tab or semicolon delimited, with or without a byte-order mark; `NA` / `#N/A` treated as missing.
-- **Private-only roles and readouts:** analysed separately and shown next to the closest public role, never pooled.
+## How files are read
+There are no settings. The app decides how to read a file from its column names and from sample values taken across the whole file. Files are often sorted, so it doesn't rely on the first rows. "How this file was read" shows every decision, its evidence and a confidence level.
 
-Tested with HALO-style, QuPath-style and inForm exports (`tests/test_formats.py`).
+| Decision | How |
+|---|---|
+| Cell position | Numeric columns named like coordinates (X, Centroid X µm, Pos_X, Cell X Position), or bounding boxes (XMin/XMax) |
+| Units | Stated in the column name (µm); recognised from the export format (CODEX processor naming, inForm pixels); otherwise estimated from cell spacing |
+| Patient, image | Columns named like patient / donor / case and image / core / FOV; checked that every image belongs to one patient; otherwise taken from file or image names |
+| Cell types | The label column whose values are recognised cell types ("CD8+ T cells", "CD68+CD163+ macrophages", "Neutrophil", "MacCD163") **and** whose labelled cells actually carry that type's marker. Region columns such as "neighborhood name" are ruled out this way. If there are no labels, yes/no columns named after lineage markers (CD3, CD68, CD66b, …) are turned into rules |
+| Readouts | Columns named after Ki-67, PD-1, granzyme B, LAG-3, ICOS and cleaved PARP; mean intensity preferred |
+
+**What it can't read:**
+- **HALO exports that name markers only by dye** ("Dye 3 Positive"). The file never says which antibody Dye 3 is, so the app explains this and asks for an export with marker names or a phenotype column.
+- **Tables with intensities but no cell types.** The app doesn't assign cell types from raw intensities.
+
+**Pixel size is the main approximation.** When a file doesn't state units, the size of a pixel has to be estimated from how densely cells are packed. Since the 10 and 30 µm thresholds depend on it, the app reruns the analysis at −20% and +25% pixel size and marks any finding that changes.
+
+Tested: automatic reading of the raw CODEX (35 patients) and IMMUcan (179 patients) files reproduces the hand-reviewed reference exactly. HALO-style, QuPath-style and inForm exports, sorted files, and refusals are covered in `tests/test_automap.py`.
 
 ## When data doesn't fit
 Nothing is compared until the data passes its checks. Every problem names the file and says how to fix it.
@@ -65,8 +74,13 @@ The Python kit's RNA path reads whole AnnData files into memory. The SPATCH file
 
 Details: [docs/recipe.md](docs/recipe.md), [docs/kit.md](docs/kit.md).
 
-## Reference data
-218 patients: IMMUcan imaging mass cytometry (179 patients, 5 cancers), CODEX colorectal cancer (35), SPATCH platform benchmark (3 patients, 4 runs). Only per-patient summary statistics are bundled. Sources and licenses: [NOTICE.md](NOTICE.md).
+## Reference data: where it comes from
+218 patients: IMMUcan imaging mass cytometry (179 patients, 5 cancers), CODEX colorectal cancer (35), SPATCH platform benchmark (3 patients, 4 runs).
+- **Not in this repository:** the raw public datasets (about 12 GB). They were downloaded from their public archives (Zenodo, Mendeley Data, the SPATCH portal).
+- **In this repository:** they were run once through the Python kit, and only the per-patient summary numbers are committed (`src/bio/kit/reference/*.csv`, about 100 KB) and embedded in the page.
+- **Cell-level data in git:** just a 3-patient CODEX subset (`tests/fixtures/`, CC BY 4.0) and two 10-cell SPIAT examples (Artistic-2.0), used by the tests.
+
+Sources and licenses: [NOTICE.md](NOTICE.md).
 
 ## Python kit
 The same recipe in Python, for RNA data (AnnData `.h5ad`), batch runs, and rebuilding the reference:
@@ -86,5 +100,6 @@ The browser recipe (`web/recipe.js`) and the Python recipe (`src/bio/recipe_prot
 - Protein-imaging recipe only in the browser. RNA data needs the Python kit.
 - Very large cohorts (more than about 8 million cells) may exceed browser memory; split them by patient.
 - These are associations in tissue snapshots. They do not show that one cell type causes a change in another.
+- Research use only; not for diagnosis or treatment decisions.
 
 Code: MIT. Data: see NOTICE.md.

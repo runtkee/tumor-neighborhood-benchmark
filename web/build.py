@@ -14,7 +14,6 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB, DIST, REF = ROOT / "web", ROOT / "web" / "dist", ROOT / "src" / "bio" / "kit" / "reference"
-EXAMPLE_PATIENTS = 6
 LABELS = {  # id -> (label, short label for plot columns)
     "IMMUcan_IMC_panel1": ("IMMUcan · IMC · 5 cancers", "IMMUcan IMC"),
     "CODEX_CRC_Schurch2020": ("CODEX · colorectal", "CODEX colon"),
@@ -43,32 +42,17 @@ def reference():
     return {"recipe": recipe, "datasets": datasets, "rows": rows}
 
 
-def example():
-    m = yaml.safe_load((ROOT / "kit_manifests" / "CODEX_CRC_Schurch2020.yaml").read_text())
-    c = m["columns"]
-    need = [c[k] for k in ("patient", "field", "x", "y", "type")] + list(m["states"].values()) + list(m["bleed"].values())
-    src = pd.read_csv(ROOT / m["path"], usecols=need, dtype={c[k]: str for k in ("patient", "field", "type")},
-                      float_precision="round_trip")
-    counts = src.groupby(c["patient"])[c["type"]].apply(lambda s: min((s == "granulocytes").sum(), s.str.contains("T cells").sum()))
-    pats = counts.sort_values(ascending=False).index[:EXAMPLE_PATIENTS]
-    sub = src[src[c["patient"]].isin(pats)][need]
-    cfg = {"dataset": "EXAMPLE_CODEX_subset", "columns": c, "pixel_size_um": m["pixel_size_um"], "roles": m["roles"],
-           "states": m["states"], "bleed": m["bleed"]}
-    return sub.to_csv(index=False), cfg
-
-
 def main():
     DIST.mkdir(parents=True, exist_ok=True)
     ref = reference()
-    ex_csv, ex_cfg = example()
     css = (WEB / "app.css").read_text()
     body = (WEB / "body.html").read_text()
     blocks = (f'<script type="application/json" id="ref-data">{json.dumps(ref, separators=(",", ":"))}</script>\n'
-              f'<script type="application/json" id="example-cfg">{json.dumps(ex_cfg)}</script>\n'
-              f'<script type="text/plain" id="example-data">{ex_csv}</script>\n'
               f'<script type="text/plain" id="recipe-src">{(WEB / "recipe.js").read_text()}</script>\n'
+              f'<script type="text/plain" id="automap-src">{(WEB / "automap.js").read_text()}</script>\n'
+              f'<script>{(WEB / "findings.js").read_text()}</script>\n'
               f'<script>{(WEB / "app.js").read_text()}</script>\n')
-    for s in [ex_csv, (WEB / "recipe.js").read_text()]:
+    for s in [(WEB / n).read_text() for n in ("recipe.js", "automap.js", "findings.js", "app.js")]:
         assert "</script" not in s.lower()
     title = "<title>Tumor Neighborhood Benchmark</title>"
     fonts = ('<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
@@ -89,7 +73,7 @@ def main():
     (ROOT / "docs" / ".nojekyll").write_text("")
     for f in DIST.iterdir():
         print(f"{f.name}: {f.stat().st_size / 1e6:.1f} MB")
-    print(f"reference: {sum(d['n'] for d in ref['datasets'])} patients, recipe {ref['recipe']}; example: {ex_csv.count(chr(10)) - 1} cells")
+    print(f"reference: {sum(d['n'] for d in ref['datasets'])} patients, recipe {ref['recipe']}")
 
 
 if __name__ == "__main__":

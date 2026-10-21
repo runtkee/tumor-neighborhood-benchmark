@@ -25,27 +25,25 @@ chrome.stderr.on("data", async (d) => {
     const evalJS = async (expr) => (await send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true })).result?.value;
     const until = async (expr, ms) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await evalJS(expr)) return true; await new Promise((r) => setTimeout(r, 250)); } return false; };
     const report = async (label) => {
-      const r = await evalJS(`({load: document.querySelector('#load-status')?.innerText, run: document.querySelector('#run-status')?.innerText,
-        checks: [...document.querySelectorAll('#checks tr')].map(t=>t.innerText.replace(/\\s+/g,' ')).slice(0,40),
+      const r = await evalJS(`({datasets: [...document.querySelectorAll('#dsets .dset')].map(li=>li.innerText.replace(/\\s+/g,' ').slice(0,420)),
         claims: document.querySelectorAll('#claims .claim').length, plots: document.querySelectorAll('#claims svg').length,
-        chips: [...document.querySelectorAll('#claims .chip')].map(c=>c.innerText), summaryLines: (document.querySelector('#summary')?.value||'').split('\\n').length})`);
+        details: [...document.querySelectorAll('#details .detail')].map(d=>d.innerText.replace(/\\s+/g,' ').slice(0,300))})`);
       console.log(`\n== ${label}\n` + JSON.stringify(r, null, 1));
       return r;
     };
-    const okExample = await until("document.querySelectorAll('#claims .claim').length > 0", 90000);
-    await report("example (built-in) " + (okExample ? "rendered" : "DID NOT RENDER"));
-    for (const f of uploads) {  // load a user file through the real file input
+    const okStart = await until("document.querySelectorAll('#claims .claim').length > 0", 60000);
+    await report("start (public reference) " + (okStart ? "rendered" : "DID NOT RENDER"));
+    for (const f of uploads) {
+      const before = await evalJS("document.querySelectorAll('#dsets .dset').length");
       const doc = await send("DOM.getDocument"); const node = await send("DOM.querySelector", { nodeId: doc.root.nodeId, selector: "#file" });
       await send("DOM.setFileInputFiles", { files: [f], nodeId: node.nodeId });
-      await until("document.querySelector('#load-status').innerText.match(/loaded|can.t use|stopped/)", 60000);
-      await new Promise((r) => setTimeout(r, 1500));
-      if (await evalJS("/can.t use/i.test(document.querySelector('#load-status').innerText)")) { await report("upload " + path.basename(f) + " (rejected at load)"); continue; }
-      await evalJS("document.querySelector('#btn-check').click()");
-      await until("document.querySelectorAll('#checks tr').length > 2 || document.querySelector('#run-status').innerText.match(/stopped/)", 120000);
-      await report("upload " + path.basename(f));
+      await until(`document.querySelectorAll('#dsets .dset').length > ${before} && ![...document.querySelectorAll('#dsets .chip')].some(c=>/analysing/i.test(c.innerText))`, 180000);
+      await report("added " + path.basename(f));
     }
+    const okExample = okStart;
     console.log("\nconsole errors:", errors.length ? errors : "none");
-    ws.close(); chrome.kill(); fs.rmSync(dir, { recursive: true, force: true });
+    if (process.env.SHOT) { await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1800, deviceScaleFactor: 1, mobile: false }); await new Promise((r) => setTimeout(r, 800)); const s = await send("Page.captureScreenshot", { format: "png" }); fs.writeFileSync(process.env.SHOT, Buffer.from(s.data, "base64")); }
+    ws.close(); chrome.kill(); setTimeout(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) {} }, 500);
     process.exit(okExample && !errors.length ? 0 : 1);
   };
 });

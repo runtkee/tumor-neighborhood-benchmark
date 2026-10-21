@@ -94,6 +94,7 @@
   const TRUE = /^(1|1\.0+|true|yes|y|pos|positive|\+)$/i;
   const truthy = (s) => s !== undefined && (TRUE.test(String(s).trim()) || (Number(s) > 0));
   const FILE_COL = "__file__";  // virtual column: the file each row came from
+  const ONE_COL = "__one__";    // virtual column: the same value ("all") for every row
 
   // What kind of file is this, from its first bytes? Returns null if it looks like text.
   function sniff(bytes, name) {
@@ -151,7 +152,7 @@
     function header(r) {
       const H = {}; r.forEach((h, i) => { const k = h.replace(/^﻿/, "").trim(); if (!(k in H)) H[k] = i; });
       const missing = [];
-      const col = (name) => { if (name === FILE_COL) return -1; if (!(name in H)) { missing.push(name); return -2; } return H[name]; };
+      const col = (name) => { if (name === FILE_COL) return -1; if (name === ONE_COL) return -3; if (!(name in H)) { missing.push(name); return -2; } return H[name]; };
       const ax = (spec) => (spec && typeof spec === "object" ? [col(spec.min), col(spec.max)] : [col(spec)]);
       cur.len = r.length;
       cur.ip = col(c.patient); cur.if = col(c.field); cur.cx = ax(c.x); cur.cy = ax(c.y);
@@ -170,7 +171,7 @@
       if (!cur.H) return header(r);
       diag.rows++; cur.info.rows++;
       if (r.length < cur.len) { diag.short++; cur.info.short++; return; }
-      const g = (i) => (i === -1 ? cur.name : r[i]);
+      const g = (i) => (i === -1 ? cur.name : i === -3 ? "all" : r[i]);
       let raw, role;
       if (cur.rules) {
         let k = -1;
@@ -516,7 +517,7 @@
     return out;
   }
 
-  const api = { VERSION, ROLES, STATES, fnv1a, mulberry32, choose, createParser, eachCSVRow, csvHeader, detectDelim, prepText, sniff, derive, truthy, FILE_COL,
+  const api = { VERSION, ROLES, STATES, fnv1a, mulberry32, choose, createParser, eachCSVRow, csvHeader, detectDelim, prepText, sniff, derive, truthy, FILE_COL, ONE_COL,
     createImporter, importCells, importFiles, patientRows, runChecks, medianSpacing, pctRankByField, usable, imageKeys };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.Recipe = api;
 })(typeof self !== "undefined" ? self : this);
