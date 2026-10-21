@@ -26,6 +26,36 @@ One row per cell, from one or several files (e.g. one per slide). Supported:
 
 Tested with HALO-style, QuPath-style and inForm exports (`tests/test_formats.py`).
 
+## When data doesn't fit
+Nothing is compared until the data passes its checks. Every problem names the file and says how to fix it.
+- **On load:** Excel, zip, gzip, PDF and HDF5 (`.h5ad`) files are recognised and refused with instructions. The page also catches empty files, files without a usable delimiter, repeated column names, and files whose columns differ.
+- **Before comparing:** the page blocks the comparison when it finds any of these:
+  - rows with missing columns;
+  - unusable coordinates;
+  - empty patient or image IDs;
+  - duplicated cells (the same file loaded twice);
+  - wrong pixel size (cell spacing outside 5–15 µm, with the implied correct value);
+  - implausible image sizes;
+  - no T cells;
+  - a marker rule built on an intensity column instead of a yes/no flag;
+  - a cell type whose own marker isn't high in it (a wrong label or a wrong marker).
+- **Notes, which don't block:** constant or text-only readouts (left out), yes/no flags used as readouts, small images skipped, unmapped labels, and patients with too few T cells.
+
+The tests in `tests/test_validation.js` cover each case, and `tests/browser_smoke.js` runs the page in headless Chrome.
+
+## How big a dataset fits
+Files are read in chunks, and only the mapped columns are kept. Measured on a 10-core laptop with 26 GB RAM:
+
+| Cells | File size | Time | Peak memory |
+|---|---|---|---|
+| 50,000 (example) | 6 MB | under 1 s | small |
+| 2 million | 223 MB | about 15 s | 1.3 GB |
+| 6 million | 671 MB | about 35 s | 2.9 GB |
+
+Expect a typical 8 GB laptop to handle about 2–3 million cells and a 16 GB laptop about 6–8 million. Above that, run groups of patients separately. Results are per patient, so the groups combine exactly. The page warns when a load looks too large.
+
+The Python kit's RNA path reads whole AnnData files into memory. The SPATCH files used for the reference (1–3 GB each) need a 16 GB+ machine.
+
 ## Method (locked recipe v2p.1)
 - Touching = under 10 µm; nearby = under 30 µm.
 - Every proximity test is compared against labels shuffled within each image (20 shuffles), so tissue layout is held fixed.
@@ -54,7 +84,7 @@ The browser recipe (`web/recipe.js`) and the Python recipe (`src/bio/recipe_prot
 
 ## Limits
 - Protein-imaging recipe only in the browser. RNA data needs the Python kit.
-- Browser memory limits apply to multi-gigabyte whole-slide exports. Export only the needed columns.
+- Very large cohorts (more than about 8 million cells) may exceed browser memory; split them by patient.
 - These are associations in tissue snapshots. They do not show that one cell type causes a change in another.
 
 Code: MIT. Data: see NOTICE.md.

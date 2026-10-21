@@ -34,7 +34,7 @@ def patient_rows(df, types, states, bleed, pairs=PAIRS, sources=SOURCES):
     states: list of protein columns describing T state. bleed: dict source role -> protein column."""
     df = df.reset_index(drop=True)
     for col in states + list(bleed.values()):
-        df[col + "_pct"] = df.groupby("field")[col].rank(pct=True) * 100
+        df[col + "_pct"] = df.groupby(["patient", "field"])[col].rank(pct=True) * 100  # image = patient + image name
     role = {r: df["type"].isin(v).to_numpy() for r, v in types.items()}
     acc = {}
     for (pat, field), g in df.groupby(["patient", "field"]):

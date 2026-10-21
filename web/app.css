@@ -100,3 +100,6 @@ td.num, th.num { text-align: right; }
 details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 textarea.summary { width: 100%; min-height: 120px; font: 12px var(--f-data); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; box-sizing: border-box; }
 .refs label { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; margin-right: 14px; }
+.problem { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; width: 100%; }
+.problem > div { min-width: 0; }
+.bad-text { color: var(--bad); }

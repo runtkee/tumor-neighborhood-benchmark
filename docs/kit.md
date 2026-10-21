@@ -43,3 +43,10 @@ Per-patient summary tables from IMMUcan (179 patients), CODEX CRC (35) and SPATC
 - Source: `web/recipe.js` (port of recipe v2p.1), `web/app.js`, `web/app.css`, `web/body.html`. Build with `uv run python web/build.py`; it writes `docs/index.html`.
 - **Parity:** `analysis/parity_check.py <manifest>` runs Python and JS on the same CSV. CODEX (1,311 values) and IMMUcan (5,655 values) match to ≤1e-12. `tests/test_parity.py` keeps them in sync.
 - CSV input and the protein recipe only. RNA data stays with the Python kit.
+
+## Validation and size (browser version)
+- `runChecks` in `web/recipe.js` returns `[check, pass|warn|fail, what we found, how to fix]`. Any fail blocks the comparison unless the user forces it, and forced runs are flagged on the results.
+- The loader streams files (`importFiles`), stores coordinates and readouts in typed arrays, and interns repeated strings.
+- An image is identified by patient plus image name, so names reused across patients ("Core 1") stay separate. The Python kit applies the same rule.
+- Readouts with fewer than two distinct values are left out in both versions.
+- Tests: `node tests/test_validation.js` (parser chunking, streaming vs whole-file, 13 bad-data cases), `node tests/browser_smoke.js docs/index.html [files]`.

@@ -7,8 +7,10 @@ from . import ROLES
 def compute(df, m):
     roles_present = set(df["type"].unique())
     types = {r: [r] for r in roles_present if r in ROLES or r in m.get("extra_roles", {})}
-    states = [s for s in m.get("states", {}) if s in df.columns and df[s].notna().any()]
-    bleed = {r: f"bleed_{r}" for r in m.get("bleed", {}) if f"bleed_{r}" in df.columns}
+    # a readout is usable only with >= 2 distinct numeric values (same rule as web/recipe.js usable())
+    usable = lambda c: c in df.columns and df[c].nunique(dropna=True) >= 2
+    states = [s for s in m.get("states", {}) if usable(s)]
+    bleed = {r: f"bleed_{r}" for r in m.get("bleed", {}) if usable(f"bleed_{r}")}
     extra = list(m.get("extra_roles", {}))
     pairs = PAIRS + [("T", r) for r in extra]
     sources = SOURCES + extra

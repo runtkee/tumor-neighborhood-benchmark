@@ -70,10 +70,11 @@ def _rna(m):
 
 def _roles(df, m):
     df["type"] = df["raw_type"].map(m["roles"]).fillna("unmapped")
-    df = df[df["type"] != "drop"].reset_index(drop=True)
+    df = df[df["type"] != "drop"]
+    df = df[np.isfinite(df["x_um"].astype(float)) & np.isfinite(df["y_um"].astype(float))].reset_index(drop=True)  # no position, no distance
     min_f = int(m.get("min_cells_per_field", 0) or 0)
-    if min_f > 0:  # drop tiny images (same rule as web/recipe.js)
-        n = df.groupby("field")["field"].transform("size")
+    if min_f > 0:  # drop tiny images (same rule as web/recipe.js); an image is patient + image name
+        n = df.groupby(["patient", "field"])["field"].transform("size")
         df = df[n >= min_f].reset_index(drop=True)
     return df
 

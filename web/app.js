@@ -28,52 +28,84 @@
 
   const S = { header: [], labels: [], checks: null, rows: null, example: false, refOn: new Set(REF.datasets.map((d) => d.id)), forced: false, files: [] };
 
-  // ---- worker ----
+  // ---- worker: files are read in chunks (streaming); only the mapped columns are kept ----
+  const LIMIT_CELLS = 8e6;  // above this a typical 8–16 GB laptop browser may run out of memory
   const workerSrc = RECIPE_SRC + "\n;(" + function () {
-    let files = [], cells = null, cfgKey = "";
+    let files = [], cells = null, cfgKey = "", samples = [];
+    const progress = (id, stage, f) => self.postMessage({ id, progress: { stage, f } });
+    const asBlob = (f) => ({ name: f.name, size: f.size, slice: (...a) => f.slice(...a), stream: () => f.stream() });
     self.onmessage = async (e) => {
       const { id, cmd } = e.data;
       try {
         let out;
         if (cmd === "load") {
-          files = e.data.files ? await Promise.all(e.data.files.map(async (f) => ({ name: f.name, text: await f.text() }))) : [{ name: e.data.name, text: e.data.text }];
-          cells = null;
-          const headers = files.map((f) => Recipe.csvHeader(f.text));
-          const sample = []; const t0 = Recipe.prepText(files[0].text);
-          let k = 0; Recipe.eachCSVRow(t0.slice(0, 3e6), (r) => { if (k++ > 0 && sample.length < 4000) sample.push(r); }, Recipe.detectDelim(t0));
-          let rows = 0;
-          for (const f of files) { for (let i = f.text.indexOf("\n"); i !== -1; i = f.text.indexOf("\n", i + 1)) rows++; rows--; if (!f.text.endsWith("\n")) rows++; }
-          const mismatch = headers.slice(1).filter((h) => h.join("\u0001") !== headers[0].join("\u0001")).length;
-          out = { header: headers[0], sample, rows, files: files.map((f) => f.name), delim: Recipe.detectDelim(t0), mismatch };
-        } else if (cmd === "labels") {
-          const counts = new Map();
+          files = (e.data.files || [new File([e.data.text], e.data.name)]).map(asBlob);
+          cells = null; samples = [];
+          const problems = [], headers = [];
           for (const f of files) {
-            const t = Recipe.prepText(f.text); let H = null;
-            Recipe.eachCSVRow(t, (r) => { if (H === null) { H = r.map((x) => x.trim()).indexOf(e.data.col); return; } if (H < 0) return; counts.set(r[H], (counts.get(r[H]) || 0) + 1); }, Recipe.detectDelim(t));
+            if (f.size === 0) { problems.push(["fail", `${f.name} is empty`, "Export the cell table again."]); continue; }
+            const bad = Recipe.sniff(new Uint8Array(await f.slice(0, 4096).arrayBuffer()), f.name);
+            if (bad) { problems.push(["fail", bad.title, bad.fix]); continue; }
+            const whole = f.size <= 4 << 20;
+            const head = Recipe.prepText(await f.slice(0, 4 << 20).text());
+            const h = Recipe.csvHeader(head);
+            if (h.length < 4) problems.push(["fail", `${f.name}: found ${h.length} column${h.length === 1 ? "" : "s"}`, "The file needs comma, tab or semicolon separated columns (patient, image, x, y, cell type, markers). Check the export settings."]);
+            const dups = [...new Set(h.filter((x, i) => h.indexOf(x) !== i))];
+            if (dups.length) problems.push(["warn", `${f.name}: column names appear twice: ${dups.slice(0, 5).join(", ")}`, "The first copy of each is used. Rename the duplicates in your export if they differ."]);
+            headers.push(h);
+            const lines = []; let k = 0;
+            Recipe.eachCSVRow(head.slice(0, head.lastIndexOf("\n") + 1), (r) => { if (k++ > 0 && lines.length < 20000) lines.push(r); }, Recipe.detectDelim(head));
+            const text = whole ? head : head.slice(0, head.lastIndexOf("\n") + 1);  // a partial last line is cut off
+            k = 0; Recipe.eachCSVRow(text, () => k++, Recipe.detectDelim(head));
+            samples.push({ name: f.name, text, rowsInHead: Math.max(k - 1, 0), headBytes: whole ? f.size : text.length, whole });
+          }
+          const base = headers[0] || [];
+          const mismatch = headers.slice(1).filter((h) => h.join("\u0001") !== base.join("\u0001")).length;
+          if (mismatch) problems.push(["warn", `${mismatch} file(s) have different columns from the first`, "Columns are matched by name. Files missing a mapped column will be reported when you run the checks."]);
+          const est = samples.reduce((a, s) => { const f = files.find((x) => x.name === s.name); return a + (s.whole ? s.rowsInHead : (s.rowsInHead * f.size) / s.headBytes); }, 0);
+          out = { header: base, sample: samples.length ? (() => { const r = []; let k = 0; Recipe.eachCSVRow(samples[0].text, (x) => { if (k++ > 0 && r.length < 4000) r.push(x); }, Recipe.detectDelim(samples[0].text)); return r; })() : [],
+                  estRows: Math.round(est), bytes: files.reduce((a, f) => a + f.size, 0), files: files.map((f) => f.name),
+                  delim: samples.length ? Recipe.detectDelim(samples[0].text) : ",", problems };
+        } else if (cmd === "labels") {  // full streaming pass over one column
+          const counts = new Map(); let done = 0; const total = files.reduce((a, f) => a + f.size, 0);
+          for (const f of files) {
+            const d = Recipe.detectDelim(Recipe.prepText(await f.slice(0, 1 << 16).text()));
+            let H = null;
+            const p = Recipe.createParser(d, (r) => { if (H === null) { H = r.map((x) => x.replace(/^﻿/, "").trim()).indexOf(e.data.col); return; } if (H >= 0) counts.set(r[H], (counts.get(r[H]) || 0) + 1); });
+            const rd = f.stream().getReader(), dec = new TextDecoder();
+            for (;;) { const { value, done: dn } = await rd.read(); if (dn) break; done += value.length; p.feed(dec.decode(value, { stream: true })); progress(id, "Reading labels", done / total); }
+            p.feed(dec.decode()); p.end();
           }
           out = [...counts.entries()].sort((a, b) => b[1] - a[1]);
-        } else if (cmd === "preview") {  // patient / image IDs and per-role counts under the current config
-          const c = Recipe.importCells(files, e.data.cfg);
+        } else if (cmd === "preview") {  // fast: first ~4 MB of each file
+          const c = Recipe.importCells(samples.map((s) => ({ name: s.name, text: s.text })), e.data.cfg);
           const roleCounts = {}; for (const t of c.type) roleCounts[t] = (roleCounts[t] || 0) + 1;
           const pats = [...new Set(c.patient)], fields = [...new Set(c.field)];
-          out = { patients: pats.length, patientEx: pats.slice(0, 4), fields: fields.length, fieldEx: fields.slice(0, 3), roleCounts, dropped: c.dropped_fields || 0,
-                  spacing: e.data.spacing ? Recipe.medianSpacing(c) : null };
+          out = { patients: pats.length, patientEx: pats.slice(0, 4), fields: fields.length, fieldEx: fields.slice(0, 3), roleCounts,
+                  spacing: e.data.spacing ? Recipe.medianSpacing(c) : null, sampled: samples.some((s) => s.headBytes < files.find((f) => f.name === s.name).size) };
         } else if (cmd === "check") {
-          cells = Recipe.importCells(files, e.data.cfg); cfgKey = JSON.stringify(e.data.cfg);
+          cells = await Recipe.importFiles(files, e.data.cfg, (f) => progress(id, "Reading files", f)); cfgKey = JSON.stringify(e.data.cfg);
+          progress(id, "Checking", 1);
           out = Recipe.runChecks(cells, e.data.cfg);
-          if (cells.dropped_fields) out.push(["small images skipped", "warn", `${cells.dropped_fields} images had fewer cells than the minimum and were left out`]);
         } else if (cmd === "run") {
-          if (!cells || cfgKey !== JSON.stringify(e.data.cfg)) cells = Recipe.importCells(files, e.data.cfg);
-          out = Recipe.patientRows(cells, e.data.cfg);
+          if (!cells || cfgKey !== JSON.stringify(e.data.cfg)) cells = await Recipe.importFiles(files, e.data.cfg, (f) => progress(id, "Reading files", f));
+          out = Recipe.patientRows(cells, e.data.cfg, (f) => progress(id, "Computing distances and shuffles", f));
         }
         self.postMessage({ id, ok: true, out });
-      } catch (err) { self.postMessage({ id, ok: false, error: String(err && err.message || err) }); }
+      } catch (err) { self.postMessage({ id, ok: false, error: String(err && err.message || err), fix: err && err.fix || "" }); }
     };
   }.toString() + ")();";
   const worker = new Worker(URL.createObjectURL(new Blob([workerSrc], { type: "text/javascript" })));
   let seq = 0; const pending = new Map();
-  worker.onmessage = (e) => { const p = pending.get(e.data.id); pending.delete(e.data.id); e.data.ok ? p.res(e.data.out) : p.rej(new Error(e.data.error)); };
-  const call = (cmd, data) => new Promise((res, rej) => { const id = ++seq; pending.set(id, { res, rej }); worker.postMessage({ id, cmd, ...data }); });
+  worker.onmessage = (e) => {
+    const p = pending.get(e.data.id); if (!p) return;
+    if (e.data.progress) { if (p.onProgress) p.onProgress(e.data.progress); return; }
+    pending.delete(e.data.id);
+    if (e.data.ok) p.res(e.data.out); else { const err = new Error(e.data.error); err.fix = e.data.fix; p.rej(err); }
+  };
+  worker.onerror = (e) => { for (const p of pending.values()) { const err = new Error("The analysis stopped unexpectedly" + (e.message ? `: ${e.message}` : "") + "."); err.fix = "If your file is very large, the browser may have run out of memory: split the cohort into groups of patients and run each group (results are per patient, so they combine exactly)."; p.rej(err); } pending.clear(); };
+  const call = (cmd, data, onProgress) => new Promise((res, rej) => { const id = ++seq; pending.set(id, { res, rej, onProgress }); worker.postMessage({ id, cmd, ...data }); });
+  const showProgress = (el) => ({ stage, f }) => status(el, `<span class="spinner"></span><span>${esc(stage)}… ${Math.round(f * 100)}%</span>`);
 
   // ---- helpers ----
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -86,20 +118,26 @@
     return `<select id="${id}" multiple size="3">` + options.map((o) => `<option value="${esc(o)}"${values.includes(o) ? " selected" : ""}>${esc(o)}</option>`).join("") + "</select>";
   }
   const status = (el, html) => ($(el).innerHTML = html);
-  const setStepEnabled = (id, on) => $(id).setAttribute("aria-disabled", on ? "false" : "true");
+  const setStepEnabled = (id, on) => { const el = $(id); el.setAttribute("aria-disabled", on ? "false" : "true"); el.inert = !on; };  // inert: disabled steps can't be clicked
   const typeMode = () => ($("#mode-rules").checked ? "rules" : "label");
 
   // ---- step 1: load ----
   async function load(input, isExample) {
     const names = input.files ? input.files.map((f) => f.name) : [input.name];
     status("#load-status", `<span class="spinner"></span><span>Reading ${esc(names.length > 1 ? names.length + " files" : names[0])}…</span>`);
-    S.example = isExample; S.checks = S.rows = null; renderChecks(); renderResults();
+    S.example = isExample; S.checks = S.rows = null; S.header = []; renderChecks(); renderResults(); status("#run-status", "");
+    setStepEnabled("#step-map", false); setStepEnabled("#step-check", false); setStepEnabled("#step-compare", false);
     const info = await call("load", input);
+    const fails = info.problems.filter((p) => p[0] === "fail");
+    const probHtml = info.problems.map(([s, title, fix]) => `<div class="problem"><span class="chip ${s}">${s === "fail" ? "can't use" : "note"}</span><div><b>${esc(title)}</b><br><span class="muted">${esc(fix)}</span></div></div>`).join("");
+    if (fails.length || !info.header.length) { status("#load-status", probHtml || `<span class="chip fail">can't use</span><span>No readable table found.</span>`); return; }
     S.header = info.header; S.sample = info.sample; S.files = info.files;
     const delim = { ",": "comma-separated", "\t": "tab-separated", ";": "semicolon-separated" }[info.delim];
+    const mb = info.bytes / 1e6, big = info.estRows > LIMIT_CELLS;
     status("#load-status", `<span class="chip pass">loaded</span><span class="mono">${esc(names.length > 1 ? names.length + " files" : names[0])}</span>` +
-      `<span class="muted">${info.rows.toLocaleString()} rows · ${info.header.length} columns · ${delim}</span>` +
-      (info.mismatch ? `<span class="chip warn">${info.mismatch} file(s) have different columns from the first; matching columns are used by name</span>` : "") +
+      `<span class="muted">about ${info.estRows.toLocaleString()} rows · ${mb >= 1 ? mb.toFixed(0) + " MB" : "<1 MB"} · ${info.header.length} columns · ${delim}</span>` +
+      (big ? `<div class="problem"><span class="chip warn">large</span><div><b>About ${(info.estRows / 1e6).toFixed(0)} million cells may exceed this browser's memory.</b><br><span class="muted">It may still work on a 16 GB+ computer. If the page stops, split the cohort into groups of patients and run each group: results are per patient, so they combine exactly.</span></div></div>` : "") +
+      probHtml +
       (isExample ? `<span class="example-note">Example: 6 patients from the public CODEX colon cancer dataset (Schürch et al. 2020), standing in for private data. CODEX is left out of the reference while this example is loaded.</span>` : ""));
     if (isExample) S.refOn.delete("CODEX_CRC_Schurch2020"); else S.refOn = new Set(REF.datasets.map((d) => d.id));
     await buildMapping(isExample ? EXAMPLE_CFG : null);
@@ -110,7 +148,10 @@
   ["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("over"); }));
   ["dragleave", "drop"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
   drop.addEventListener("drop", (e) => { const f = [...e.dataTransfer.files]; if (f.length) load({ files: f }, false).catch(showError); });
-  function showError(err) { status("#run-status", `<span class="chip fail">error</span><span>${esc(err.message)}</span>`); }
+  function showError(err) {
+    const html = `<div class="problem"><span class="chip fail">stopped</span><div><b>${esc(err.message)}</b>${err.fix ? `<br><span class="muted">${esc(err.fix)}</span>` : ""}</div></div>`;
+    status("#run-status", html); if (!S.header.length) status("#load-status", html);
+  }
 
   // ---- step 2: map ----
   function idBlock(key, label, col, rule) {
@@ -198,7 +239,8 @@
   async function refreshLabels(presetRoles) {
     const col = $("#col-type").value;
     if (!col) { $("#roles tbody").innerHTML = `<tr><td colspan="3" class="muted">Choose the cell type column above.</td></tr>`; S.labels = []; return; }
-    S.labels = await call("labels", { col });
+    S.labels = await call("labels", { col }, showProgress("#run-status"));
+    status("#run-status", "");
     $("#roles tbody").innerHTML = S.labels.map(([lab, n], i) => {
       const g = presetRoles ? presetRoles[lab] || "other" : (ROLE_HINTS.find(([, re]) => re.test(String(lab).toLowerCase())) || ["other"])[0];
       return `<tr><td class="mono">${esc(lab)}</td><td class="num">${n.toLocaleString()}</td><td>${select("role-" + i, ROLE_OPTS, g, false)}</td></tr>`;
@@ -209,8 +251,8 @@
     if (!cfg) return;
     const pv = await call("preview", { cfg: { ...cfg, pixel_size_um: estimate ? 1 : cfg.pixel_size_um }, spacing: estimate });
     $("#pv-patient").textContent = `${pv.patients} patients, e.g. ${pv.patientEx.join(", ")}`;
-    $("#pv-field").textContent = `${pv.fields} images, e.g. ${pv.fieldEx.join(", ")}` + (pv.dropped ? ` (${pv.dropped} skipped as too small)` : "");
-    if (typeMode() === "rules") $("#rule-counts").textContent = Object.entries(pv.roleCounts).map(([r, n]) => `${r}: ${n.toLocaleString()}`).join(" · ");
+    $("#pv-field").textContent = `${pv.fields} images, e.g. ${pv.fieldEx.join(", ")}` + (pv.sampled ? " (from the start of each file)" : "");
+    if (typeMode() === "rules") $("#rule-counts").textContent = (pv.sampled ? "In the first part of each file: " : "") + Object.entries(pv.roleCounts).map(([r, n]) => `${r}: ${n.toLocaleString()}`).join(" · ");
     if (estimate && pv.spacing > 0 && Number.isFinite(pv.spacing)) {
       const est = 8 / pv.spacing; $("#px").value = est.toFixed(3);
       $("#px-hint").textContent = `Estimated ${est.toFixed(3)} µm/px, assuming cells sit about 8 µm apart. Replace it with your instrument's value (use 1 if coordinates are already in µm).`;
@@ -245,27 +287,34 @@
 
   // ---- step 3: check ----
   async function runChecks() {
+    if (!S.header.length) return;  // no usable file loaded
     const cfg = readConfig(false);
     if (cfg.error) { S.checks = [["mapping", "fail", cfg.error]]; renderChecks(); return; }
     status("#run-status", `<span class="spinner"></span><span>Checking…</span>`);
-    S.checks = await call("check", { cfg }); status("#run-status", ""); renderChecks();
+    S.checks = await call("check", { cfg }, showProgress("#run-status")); status("#run-status", ""); renderChecks();
   }
   function renderChecks() {
     const tb = $("#checks tbody");
     if (!S.checks) { tb.innerHTML = `<tr><td class="muted">Checks appear here: cell spacing (catches a wrong pixel size), cells per role, whether each cell type's own marker is actually high in it, available readouts, number of patients.</td></tr>`; $("#btn-run").disabled = true; return; }
-    tb.innerHTML = S.checks.map(([n, s, d]) => `<tr><td><span class="chip ${s}">${s}</span></td><td>${esc(n)}</td><td class="muted">${esc(d)}</td></tr>`).join("");
-    $("#btn-run").disabled = S.checks.some((c) => c[1] === "fail") && !$("#force").checked;
+    const order = { fail: 0, warn: 1, pass: 2 };
+    const sorted = [...S.checks].sort((a, b) => order[a[1]] - order[b[1]]);
+    const nf = S.checks.filter((c) => c[1] === "fail").length, nw = S.checks.filter((c) => c[1] === "warn").length;
+    tb.innerHTML = `<tr><td colspan="4">${nf ? `<b class="bad-text">${nf} problem${nf > 1 ? "s" : ""} must be fixed before comparing.</b> ` : "<b>Ready to compare.</b> "}<span class="muted">${nw} note${nw === 1 ? "" : "s"}.</span></td></tr>` +
+      `<tr><th>status</th><th>check</th><th>what we found</th><th>how to fix</th></tr>` +
+      sorted.map(([n, s, d, fix]) => `<tr><td><span class="chip ${s}">${s === "fail" ? "fix" : s === "warn" ? "note" : "ok"}</span></td><td>${esc(n)}</td><td>${esc(d)}</td><td class="muted">${esc(fix || "")}</td></tr>`).join("");
+    $("#btn-run").disabled = nf > 0 && !$("#force").checked;
   }
   $("#btn-check").addEventListener("click", () => runChecks().catch(showError));
   $("#force").addEventListener("change", renderChecks);
 
   // ---- step 4: compare ----
   async function runCompare() {
+    if (!S.header.length || !S.checks) return;
     const cfg = readConfig(false);
     S.forced = S.checks.some((c) => c[1] === "fail");
     status("#run-status", `<span class="spinner"></span><span>Computing distances and shuffles…</span>`);
     const t0 = performance.now();
-    S.rows = await call("run", { cfg }); S.cfg = cfg;
+    S.rows = await call("run", { cfg }, showProgress("#run-status")); S.cfg = cfg;
     status("#run-status", `<span class="chip pass">done</span><span class="muted">${S.rows.length} patients in ${((performance.now() - t0) / 1000).toFixed(1)} s</span>`);
     setStepEnabled("#step-compare", true); renderResults(); renderSummary();
   }
