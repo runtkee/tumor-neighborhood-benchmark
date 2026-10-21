@@ -1,0 +1,23 @@
+dataset: IMMUcan_IMC_panel1_csv
+modality: protein
+path: data/immucan/immucan_panel1_cells.csv
+columns: {patient: SampleId, field: image, x: Pos_X, y: Pos_Y, type: celltypes}
+pixel_size_um: 1.0   # IMC (Hyperion) 1 µm/pixel; checked: 8.2 µm cell spacing
+roles:
+  Tumor: tumor
+  Mural: stroma
+  CD8: T
+  CD4: T
+  Treg: T
+  MacCD163: mac
+  Neutrophil: neut      # CD15+ MPO+
+  plasma: B
+  B: B
+  BnT: other            # mixed B/T label
+  HLADR: other
+  DC: other
+  NK: other
+  pDC: other
+  undefined: drop
+states: {prolif: Ki67, PD1: PD1, GZMB: GrzB, LAG3: LAG3, ICOS: ICOS, apoptosis: cleavedPARP}
+bleed: {neut: MPO, mac: CD68, stroma: SMA}

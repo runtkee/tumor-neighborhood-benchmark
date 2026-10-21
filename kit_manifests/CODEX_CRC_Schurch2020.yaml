@@ -1,0 +1,53 @@
+dataset: CODEX_CRC_Schurch2020
+modality: protein  # reviewed
+path: data/codex_crc/CRC_clusters_neighborhoods_markers.csv
+columns:
+  patient: 'patients'  # reviewed
+  field: 'File Name'  # reviewed
+  x: 'X:X'  # reviewed
+  y: 'Y:Y'  # reviewed
+  type: 'ClusterName'  # reviewed
+pixel_size_um: 0.432  # reviewed
+roles:  # raw label -> T | neut | mac | B | stroma | tumor | other | drop
+  'tumor cells': tumor  # reviewed
+  'CD68+CD163+ macrophages': mac  # reviewed
+  'smooth muscle': stroma  # reviewed
+  'granulocytes': neut  # reviewed
+  'stroma': stroma  # reviewed
+  'CD8+ T cells': T  # reviewed
+  'CD4+ T cells CD45RO+': T  # reviewed
+  'B cells': B  # reviewed
+  'vasculature': other  # reviewed
+  'plasma cells': B  # reviewed
+  'dirt': drop  # reviewed
+  'undefined': drop  # reviewed
+  'immune cells': other  # reviewed
+  'Tregs': T  # reviewed
+  'CD4+ T cells': T  # reviewed
+  'immune cells / vasculature': other  # reviewed
+  'CD68+ macrophages': mac  # reviewed
+  'adipocytes': other  # reviewed
+  'tumor cells / immune cells': other  # reviewed: mixed label
+  'CD11b+CD68+ macrophages': mac  # reviewed
+  'CD11b+ monocytes': other  # reviewed
+  'nerves': other  # reviewed
+  'CD11c+ DCs': other  # reviewed
+  'lymphatics': other  # reviewed
+  'NK cells': other  # reviewed
+  'CD3+ T cells': T  # reviewed
+  'CD68+ macrophages GzmB+': mac  # reviewed
+  'CD4+ T cells GATA3+': T  # reviewed
+  'CD163+ macrophages': mac  # reviewed
+states:  # canonical T-state -> column
+  prolif: 'Ki67 - proliferation:Cyc_5_ch_4'  # reviewed
+  PD1: 'PD-1 - checkpoint:Cyc_12_ch_4'  # reviewed
+  GZMB: 'Granzyme B - cytotoxicity:Cyc_13_ch_2'  # reviewed
+  LAG3: 'LAG-3 - checkpoint:Cyc_8_ch_4'  # reviewed
+  ICOS: 'ICOS - costimulator:Cyc_14_ch_4'  # reviewed
+  # apoptosis: not found
+bleed:  # role -> that role's own marker column (used to measure signal bleed into T cells)
+  neut: 'CD15 - granulocytes:Cyc_14_ch_2'  # reviewed
+  mac: 'CD68 - macrophages:Cyc_18_ch_4'  # reviewed
+  stroma: 'aSMA - smooth muscle:Cyc_11_ch_2'  # reviewed: vimentin failed the sanity check (T cells express it)
+# extra_roles: {pmn_mdsc: neut}   # private-only roles and their nearest public proxy
+# extra_states: [lmp]               # private-only T states

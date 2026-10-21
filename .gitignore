@@ -1,0 +1,35 @@
+# Allowlist: nothing is published unless listed here.
+/*
+!/.gitignore
+!/README.md
+!/LICENSE
+!/NOTICE.md
+!/pyproject.toml
+!/uv.lock
+!/.python-version
+!/src/
+!/web/
+!/tests/
+!/kit_manifests/
+!/docs/
+/docs/*
+!/docs/index.html
+!/docs/.nojekyll
+!/docs/kit.md
+!/docs/recipe.md
+!/analysis/
+/analysis/*
+!/analysis/parity_check.py
+!/analysis/09_immucan_convert.py
+# research-only modules (not part of the tool)
+/src/bio/panel_check.py
+/src/bio/proximity.py
+/src/bio/qc.py
+/src/bio/cosmx.py
+/web/dist/
+/kit_manifests/*.draft.yaml
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.DS_Store

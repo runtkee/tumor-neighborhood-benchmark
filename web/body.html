@@ -1,0 +1,86 @@
+<div class="wrap">
+  <header class="top">
+    <span class="eyebrow">Spatial immunology · locked recipe <span id="recipe-version"></span></span>
+    <h1>Tumor Neighborhood Benchmark</h1>
+    <p class="muted">Load a cell table from your tumor imaging, map its columns, and see how your patients compare with <span id="ref-count"></span> public patients on the same tests: do T cells avoid neutrophils, gather near macrophages, or change state when touching them?</p>
+    <span class="privacy">Runs in your browser. Your file is never uploaded.</span>
+  </header>
+
+  <div class="steps">
+    <section class="step" id="step-load" aria-labelledby="h-load">
+      <div class="step-head"><span class="step-no">1</span><h2 id="h-load">Load a cell table</h2></div>
+      <div class="drop" id="drop">
+        <input type="file" id="file" accept=".csv,.tsv,.txt" multiple hidden>
+        <button class="primary" id="pick" type="button">Choose files</button>
+        <span class="muted">or drop them here. One row per cell (CSV or tab-separated). Several files, such as one per slide, are merged. HALO, QuPath, inForm and CODEX exports work.</span>
+      </div>
+      <div id="load-status" class="row"></div>
+    </section>
+
+    <section class="step" id="step-map" aria-labelledby="h-map">
+      <div class="step-head"><span class="step-no">2</span><h2 id="h-map">Map your columns</h2>
+        <span class="muted">Guesses are pre-filled. Check each one.</span></div>
+      <h3>Where things are</h3>
+      <div class="grid-map" id="map-ids"></div>
+      <div class="grid-map" id="map-xy"></div>
+      <div class="grid-map">
+        <div class="field"><label for="px">Pixel size (µm per pixel)</label>
+          <input type="number" id="px" step="0.001" min="0.01" value="1">
+          <span class="hint" id="px-hint"></span></div>
+        <div class="field"><label for="min-cells">Skip images with fewer cells than</label>
+          <input type="number" id="min-cells" step="1" min="0" value="50">
+          <span class="hint">Tiny images add noise. 0 keeps everything.</span></div>
+        <div class="field"><label for="dataset-name">Name for your dataset</label>
+          <input type="text" id="dataset-name" value="MY_COHORT"></div>
+      </div>
+      <h3>Cell types</h3>
+      <div class="row">
+        <label class="row" for="mode-label" style="gap:6px"><input type="radio" name="typemode" id="mode-label" value="label" checked> from a cell-type column</label>
+        <label class="row" for="mode-rules" style="gap:6px"><input type="radio" name="typemode" id="mode-rules" value="rules"> from marker positivity (HALO-style)</label>
+      </div>
+      <div id="type-label">
+        <div class="grid-map"><div class="field"><label for="col-type">Cell type column</label><span id="col-type-slot"></span></div></div>
+        <p class="hint">Assign each label in your file to a role. "Private-only neutrophil subset" (for example LOX-1+ PMN-MDSC) is analysed separately and shown next to public neutrophils, never pooled with them.</p>
+        <div class="tablewrap"><table id="roles"><thead><tr><th>label in your file</th><th class="num">cells</th><th>role</th></tr></thead><tbody></tbody></table></div>
+      </div>
+      <div id="type-rules" hidden>
+        <p class="hint">Rules are tried top to bottom; a cell takes the first rule it matches, otherwise "Other". Example: T cell = CD3 positive; neutrophil subset = CD66b and LOX-1 positive (put it above plain neutrophil).</p>
+        <p class="hint" id="dye-names"></p>
+        <div class="tablewrap"><table id="rules"><thead><tr><th>role</th><th>all of these positive</th><th>and these negative</th><th></th></tr></thead><tbody></tbody></table></div>
+        <div class="row"><button type="button" id="btn-add-rule">Add rule</button><button type="button" id="btn-preview-rules">Count cells per role</button><span id="rule-counts" class="muted"></span></div>
+      </div>
+      <h3>T-cell readouts and bleed markers</h3>
+      <div class="grid-map" id="map-states"></div>
+      <p class="hint">Bleed markers are each cell type's own marker. The kit measures how much of it shows up inside touching T cells, which tells you how far contact comparisons can be trusted.</p>
+      <div class="grid-map" id="map-bleed"></div>
+    </section>
+
+    <section class="step" id="step-check" aria-labelledby="h-check">
+      <div class="step-head"><span class="step-no">3</span><h2 id="h-check">Check</h2>
+        <button type="button" id="btn-check">Run checks</button></div>
+      <div class="tablewrap"><table id="checks"><tbody></tbody></table></div>
+      <div class="row">
+        <button class="primary" type="button" id="btn-run" disabled>Compare with public data</button>
+        <label class="row" for="force" style="gap:6px"><input type="checkbox" id="force"> run even if a check fails (the results will be flagged)</label>
+        <span id="run-status" class="row"></span>
+      </div>
+    </section>
+
+    <section class="step" id="step-compare" aria-labelledby="h-compare">
+      <div class="step-head"><span class="step-no">4</span><h2 id="h-compare">Compare</h2></div>
+      <div class="refs" id="refs"></div>
+      <div class="legend"><span><i style="background:var(--ref)"></i>public patients (line = median)</span><span><i style="background:var(--accent)"></i>your patients</span></div>
+      <div id="forced-note"></div>
+      <div class="claims" id="claims"></div>
+      <div class="claim">
+        <h3>Share a summary (optional)</h3>
+        <p class="muted">Per-patient effect sizes only, with each patient replaced by a random code. No cell-level data is included. Nothing is sent anywhere; you decide whether to pass it on. The key linking codes to your patients stays with you.</p>
+        <div class="row"><button type="button" id="btn-copy">Copy summary</button><button type="button" id="btn-download">Download summary.csv</button><span id="copy-status" class="muted"></span></div>
+        <textarea class="summary" id="summary" readonly aria-label="Summary CSV"></textarea>
+        <details><summary>Key: random code → your patient ID (keep private, do not share)</summary>
+          <textarea class="summary" id="key" readonly aria-label="Patient key"></textarea></details>
+      </div>
+    </section>
+  </div>
+  <p class="hint" style="margin-top:28px">Method: 10 µm = touching, 30 µm = nearby. Every test compares against cell labels shuffled within each image, so tissue layout is held fixed. Marker levels are within-image percentiles. Each patient gives one value. Identical to the Python kit (automated parity test). Reference sources: IMMUcan (Zenodo 10.5281/zenodo.12912567, CC BY 4.0), Schürch et al. 2020 CODEX (Mendeley 10.17632/mpjzbtfgfr.1, CC BY 4.0), SPATCH benchmark (Nat Commun 2025, summary statistics only).</p>
+</div>
