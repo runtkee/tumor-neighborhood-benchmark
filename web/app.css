@@ -7,9 +7,9 @@
   --line: #dde2e8;
   --accent: #b0267a;          /* "your data" (fluorophore magenta) */
   --accent-soft: #f6e3ee;
-  --ref: #8b96a5;             /* public reference dots */
-  --c2: #0f7f86; --c3: #b26a00; --c4: #4a52c9;   /* further loaded datasets */
-  --ref-strong: #3d4653;
+  --ref: #1f8a4c;             /* public reference dots (green) */
+  --c2: #2563d6; --c3: #b26a00; --c4: #7a3fc4;   /* further loaded datasets */
+  --ref-strong: #0e4d29;     /* median line of public datasets */
   --good: #1e7a46; --good-bg: #e2f3e8;
   --warn: #9a5b00; --warn-bg: #fbefd9;
   --bad: #b3261e;  --bad-bg: #fbe4e2;
@@ -20,17 +20,17 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #12151a; --surface: #1a1f26; --ink: #e7ebf0; --muted: #9aa4b2; --line: #2b323c;
-    --accent: #f06bb5; --accent-soft: #3a1f30; --ref: #6f7a89; --ref-strong: #c3cbd6;
+    --accent: #f06bb5; --accent-soft: #3a1f30; --ref: #4cc77f; --ref-strong: #b6f0cd;
     --good: #5fcf8b; --good-bg: #173324; --warn: #f0b552; --warn-bg: #3a2c12; --bad: #ff7a70; --bad-bg: #3d1a18;
-    --c2: #3fc1c9; --c3: #f0a83c; --c4: #8f97ff;
+    --c2: #6fa2ff; --c3: #f0a83c; --c4: #b88cff;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #12151a; --surface: #1a1f26; --ink: #e7ebf0; --muted: #9aa4b2; --line: #2b323c;
-  --accent: #f06bb5; --accent-soft: #3a1f30; --ref: #6f7a89; --ref-strong: #c3cbd6;
+  --accent: #f06bb5; --accent-soft: #3a1f30; --ref: #4cc77f; --ref-strong: #b6f0cd;
   --good: #5fcf8b; --good-bg: #173324; --warn: #f0b552; --warn-bg: #3a2c12; --bad: #ff7a70; --bad-bg: #3d1a18;
-  --c2: #3fc1c9; --c3: #f0a83c; --c4: #8f97ff;
+  --c2: #6fa2ff; --c3: #f0a83c; --c4: #b88cff;
     color-scheme: dark;
 }
 body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--f-body); margin: 0; }
@@ -42,7 +42,7 @@ body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--f-body); 
 .main { min-width: 0; display: grid; gap: 18px; align-content: start; }
 .dsets { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .dset { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 6px; min-width: 0; }
-.dset.on { border-color: var(--ref-strong); }
+.dset.on { border-color: var(--ink); }
 .dset-head { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
 .dset-head label { display: flex; gap: 8px; align-items: center; cursor: pointer; min-width: 0; }
 .dname { font-weight: 600; overflow-wrap: anywhere; }
@@ -107,7 +107,7 @@ td.num, th.num { text-align: right; }
 .chip.pass { color: var(--good); background: var(--good-bg); }
 .chip.warn { color: var(--warn); background: var(--warn-bg); }
 .chip.fail { color: var(--bad); background: var(--bad-bg); }
-.chip.info { color: var(--ref-strong); background: var(--bg); border: 1px solid var(--line); }
+.chip.info { color: var(--ink); background: var(--bg); border: 1px solid var(--line); }
 .chip.yours { color: var(--accent); background: var(--accent-soft); }
 
 .example-note { font-size: 13px; color: var(--accent); background: var(--accent-soft); padding: 8px 12px; border-radius: 6px; }

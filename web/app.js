@@ -243,9 +243,9 @@
     cols.forEach(([d, v], i) => {  // median line first, so the patient dots sit on top of it
       const cx = L + cw * (i + 0.5), loaded = d.kind === "loaded";
       const md = quant(v, 0.5);
-      svg += `<line x1="${cx - cw * 0.32}" x2="${cx + cw * 0.32}" y1="${y(md)}" y2="${y(md)}" stroke="${loaded ? d.color : "var(--ref-strong)"}" stroke-width="2.6" stroke-opacity="0.8"/>`;
+      svg += `<line x1="${cx - cw * 0.32}" x2="${cx + cw * 0.32}" y1="${y(md)}" y2="${y(md)}" stroke="${loaded ? d.color : "var(--ref-strong)"}" stroke-width="2.6" stroke-opacity="0.75"/>`;
       v.forEach((val, j) => { const jit = ((j * 0.6180339887) % 1 - 0.5) * cw * 0.5;
-        svg += `<circle cx="${(cx + jit).toFixed(1)}" cy="${y(val).toFixed(1)}" r="${loaded ? 3.8 : 2.8}" fill="${d.color}" fill-opacity="${loaded ? 0.9 : 0.6}"/>`; });
+        svg += `<circle cx="${(cx + jit).toFixed(1)}" cy="${y(val).toFixed(1)}" r="${loaded ? 4 : 3.4}" fill="${d.color}" fill-opacity="0.85" stroke="var(--surface)" stroke-width="0.8"/>`; });
       const words = String(d.short).split(" ");
       svg += `<text x="${cx}" y="${H - B + 18}" text-anchor="middle" font-size="12" fill="${loaded ? d.color : "var(--muted)"}" font-family="var(--f-body)">${esc(words[0])}</text>`;
       if (words.length > 1) svg += `<text x="${cx}" y="${H - B + 33}" text-anchor="middle" font-size="12" fill="var(--muted)" font-family="var(--f-body)">${esc(words.slice(1).join(" "))}</text>`;
