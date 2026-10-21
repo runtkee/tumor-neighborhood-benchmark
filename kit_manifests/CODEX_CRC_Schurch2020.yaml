@@ -7,7 +7,7 @@ columns:
   x: 'X:X'  # reviewed
   y: 'Y:Y'  # reviewed
   type: 'ClusterName'  # reviewed
-pixel_size_um: 0.377  # reviewed: CODEX Keyence 20x instrument value (Schürch 2020). Was 0.432 (an uncorrected estimate) until 2026-10-20.
+pixel_size_um: 0.377  # TCIA dataset page: Keyence BZ-X710, 20x/0.75, 377.44 nm/pixel. Was 0.432 (an uncorrected estimate) until 2026-10-20.
 roles:  # raw label -> T | neut | mac | B | stroma | tumor | other | drop
   'tumor cells': tumor  # reviewed
   'CD68+CD163+ macrophages': mac  # reviewed

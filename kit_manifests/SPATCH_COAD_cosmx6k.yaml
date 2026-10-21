@@ -3,7 +3,7 @@ modality: rna
 path: data/spatch/cosmx6k_coad/transcriptome/adata.h5ad
 filters: {high_quality: 1}
 columns: {patient: SPATCH_COAD_cosmx6k, field: SPATCH_COAD_cosmx6k, x: "obsm:spatial:0", y: "obsm:spatial:1", type: annotation}   # one patient, one section
-pixel_size_um: 1.0   # coordinates already in µm (checked: 7–10 µm cell spacing)
+pixel_size_um: 1.0   # coordinates already in µm: tissue spans 7–14 mm and cells sit 7–10 µm apart; image pixel sizes are stored separately (uns DAPI resolution: Xenium 0.2125, CosMx 0.1203 µm)
 identity_genes: [CD3D, CD3E, CD3G, CD2, CD247]
 roles: {CD4T: T, CD8T: T, Tprolif: T, Neutrophil: other,  # reviewed: neutrophil markers ~background on this panel (check failed), so neutrophil tests are excluded
         Macrophage: mac, Kupffer: mac, B: B, Plasma: B,

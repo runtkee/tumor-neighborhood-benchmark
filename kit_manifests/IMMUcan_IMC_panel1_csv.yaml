@@ -2,7 +2,7 @@ dataset: IMMUcan_IMC_panel1_csv
 modality: protein
 path: data/immucan/immucan_panel1_cells.csv
 columns: {patient: SampleId, field: image, x: Pos_X, y: Pos_Y, type: celltypes}
-pixel_size_um: 1.0   # IMC (Hyperion) 1 µm/pixel; checked: 8.2 µm cell spacing
+pixel_size_um: 1.0   # IMMUcan methods (Eling et al., bioRxiv 10.1101/2024.12.16.628597): "acquired at 400 Hz with 1 µm resolution", ROIs "600x600 µm" = the 600x600 px images; cell spacing 8.2 µm
 roles:
   Tumor: tumor
   Mural: stroma
