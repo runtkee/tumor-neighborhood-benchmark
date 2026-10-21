@@ -22,6 +22,8 @@
     const progress = (id, stage, f) => self.postMessage({ id, progress: { stage, f } });
     const asBlob = (f) => ({ name: f.name, size: f.size, slice: (...a) => f.slice(...a), stream: () => f.stream() });
     const toCSV = (header, rows) => [header].concat(rows).map((r) => r.map((v) => (/[",\n\r]/.test(v) ? '"' + String(v).replace(/"/g, '""') + '"' : v)).join(",")).join("\n");
+    const held = new Map();  // datasets waiting for a pixel size
+    let key = null;
     async function analyse(id, fileList) {
       const files = fileList.map(asBlob), fails = [];
       for (const f of files) {
@@ -57,6 +59,13 @@
       const fin = AutoMap.finishConfig(cfg, [...counts.entries()].sort((a, b) => b[1] - a[1]), spacing);
       const report = am.report.concat(fin.report);
       if (fin.fails.length) return { report, fails: fin.fails };
+      if (cfg._pxEstimated) {  // the file doesn't state units: ask the user before measuring distances
+        held.set(key, { files, cfg, report });
+        return { report, needPx: { estimate: cfg._pxEstimate, candidates: cfg._pxCandidates } };
+      }
+      return measure(id, files, cfg, report);
+    }
+    async function measure(id, files, cfg, report) {
       const cells = await Recipe.importFiles(files, cfg, (f) => progress(id, "Reading cells", f));
       progress(id, "Checking", 1);
       const checks = Recipe.runChecks(cells, cfg);
@@ -74,9 +83,18 @@
       }
       return { report, checks, rows, alt, meta, pxEstimated: !!cfg._pxEstimated, big: cells.n > 3e6 };
     }
+    async function resume(id, k, px) {
+      const h = held.get(k); held.delete(k);
+      if (!h) throw new Error("This dataset is no longer waiting for a pixel size. Add the file again.");
+      if (px) {
+        h.cfg.pixel_size_um = px; h.cfg._pxEstimated = false;
+        h.report = h.report.filter((r) => r.what !== "Units").concat([{ what: "Units", decision: `${px} µm per pixel`, evidence: "entered for this dataset (the file doesn't state units)", confidence: "high" }]);
+      }
+      return measure(id, h.files, h.cfg, h.report);
+    }
     self.onmessage = async (e) => {
-      const { id } = e.data;
-      try { self.postMessage({ id, ok: true, out: await analyse(id, e.data.files) }); }
+      const { id } = e.data; key = e.data.key;
+      try { self.postMessage({ id, ok: true, out: e.data.cmd === "resume" ? await resume(id, key, e.data.px) : await analyse(id, e.data.files) }); }
       catch (err) { self.postMessage({ id, ok: false, error: String(err && err.message || err), fix: err && err.fix || "" }); }
     };
   };
@@ -92,7 +110,9 @@
     for (const p of pending.values()) { const err = new Error("The analysis stopped" + (e.message ? `: ${e.message}` : "") + "."); err.fix = "The browser may have run out of memory. Split the cohort into groups of patients and add each group as its own dataset."; p.rej(err); }
     pending.clear();
   };
-  const analyse = (files, onProgress) => new Promise((res, rej) => { const id = ++seq; pending.set(id, { res, rej, onProgress }); worker.postMessage({ id, files }); });
+  const send = (msg, onProgress) => new Promise((res, rej) => { const id = ++seq; pending.set(id, { res, rej, onProgress }); worker.postMessage({ id, ...msg }); });
+  const analyse = (key, files, onProgress) => send({ cmd: "analyse", key, files }, onProgress);
+  const resume = (key, px, onProgress) => send({ cmd: "resume", key, px }, onProgress);
 
   // ---- add data ----
   function datasetName(files) {
@@ -110,19 +130,25 @@
       progress: { stage: "Waiting", f: 0 } };
     d.short = d.label.length > 16 ? d.label.slice(0, 15) + "…" : d.label;
     DS.push(d); render();
-    queue = queue.then(async () => {  // one dataset at a time keeps memory use predictable
-      try {
-        const out = await analyse(files, (p) => { d.progress = p; renderPanel(); });
-        Object.assign(d, out);
-        if (out.fails && out.fails.length) d.status = "failed";
-        else {
-          d.status = "ready"; d.n = d.rows.length; d.findings = Findings.summarize(d.rows);
-          d.sens = d.alt ? Findings.sensitivity(d.findings, d.alt) : new Set();
-          selected.add(d.id); renderSummary(d);
-        }
-      } catch (err) { d.status = "failed"; d.fails = [{ title: err.message, why: "", fix: err.fix || "" }]; }
-      render();
-    });
+    queue = queue.then(() => settle(d, analyse(d.id, files, (p) => { d.progress = p; renderPanel(); })));  // one dataset at a time
+  }
+  async function settle(d, job) {
+    try {
+      const out = await job;
+      Object.assign(d, out, { needPx: out.needPx || null });
+      if (out.fails && out.fails.length) d.status = "failed";
+      else if (out.needPx) d.status = "needs-px";
+      else {
+        d.status = "ready"; d.n = d.rows.length; d.findings = Findings.summarize(d.rows);
+        d.sens = d.alt ? Findings.sensitivity(d.findings, d.alt) : new Set();
+        selected.add(d.id); renderSummary(d);
+      }
+    } catch (err) { d.status = "failed"; d.fails = [{ title: err.message, why: "", fix: err.fix || "" }]; }
+    render();
+  }
+  function answerPx(d, px) {
+    d.status = "analysing"; d.progress = { stage: "Measuring", f: 0 }; render();
+    queue = queue.then(() => settle(d, resume(d.id, px, (p) => { d.progress = p; renderPanel(); })));
   }
   $("#pick").addEventListener("click", () => $("#file").click());
   $("#file").addEventListener("change", (e) => { addFiles([...e.target.files]); e.target.value = ""; });
@@ -132,13 +158,23 @@
   drop.addEventListener("drop", (e) => addFiles([...e.dataTransfer.files]));
 
   // ---- left panel ----
-  const STATUS_CHIP = { ready: ["pass", "ready"], analysing: ["info", "analysing"], failed: ["fail", "couldn't analyse"] };
+  const STATUS_CHIP = { ready: ["pass", "ready"], analysing: ["info", "analysing"], failed: ["fail", "couldn't analyse"], "needs-px": ["warn", "needs pixel size"] };
+  function pxForm(d) {
+    const np = d.needPx, near = np.candidates.filter((c) => c.near);
+    return `<form class="pxform" data-px="${esc(d.id)}"><p><b>How big is one pixel?</b> This file gives positions in pixels but doesn't say how large a pixel is. ` +
+      `It sets the scale for the 10 µm and 30 µm distances. Your scanner or microscope settings show it (often in µm per pixel).</p>` +
+      (near.length ? `<div class="row">${near.map((c) => `<button type="button" data-pick="${c.um}">${c.um} µm · ${esc(c.name)}</button>`).join("")}</div>` : "") +
+      `<div class="row"><label for="px-${esc(d.id)}">µm per pixel</label><input type="number" id="px-${esc(d.id)}" step="0.0001" min="0.05" max="5" value="${np.estimate}" required>` +
+      `<button type="submit" class="primary">Use this value</button></div>` +
+      `<p class="hint">Cell spacing suggests about ${np.estimate} µm. Not sure? <button type="button" class="linkish" data-estimate="1">Use the estimate</button>: results are then also recomputed at ±20% and fragile findings are flagged.</p></form>`;
+  }
   function renderPanel() {
     $("#dsets").innerHTML = DS.map((d) => {
       const [cls, txt] = STATUS_CHIP[d.status];
       const box = `<input type="checkbox" id="sel-${esc(d.id)}" data-id="${esc(d.id)}"${selected.has(d.id) ? " checked" : ""}${d.status !== "ready" ? " disabled" : ""}>`;
       let body = "";
-      if (d.status === "analysing") body = `<div class="bar"><i style="width:${Math.round((d.progress.f || 0) * 100)}%"></i></div><span class="hint">${esc(d.progress.stage)}…</span>`;
+      if (d.status === "needs-px") body = pxForm(d);
+      else if (d.status === "analysing") body = `<div class="bar"><i style="width:${Math.round((d.progress.f || 0) * 100)}%"></i></div><span class="hint">${esc(d.progress.stage)}…</span>`;
       else if (d.status === "failed") body = `<ul class="fails">${(d.fails || []).slice(0, 3).map((f) => `<li><b>${esc(f.title)}</b>${f.fix ? `<br><span class="hint">${esc(f.fix)}</span>` : ""}</li>`).join("")}</ul>`;
       else if (d.findings.every((f) => f.status === "na")) body = `<p class="hint">${d.n < 5 ? `Only ${d.n} patient${d.n === 1 ? "" : "s"}: shown in the charts, too few for summary findings.` : "No summary findings for this dataset."}</p>`;
       else body = `<ul class="finds">${d.findings.filter((f) => f.status !== "na").map((f) => `<li class="f-${f.status}">${esc(f.text)}${d.sens && d.sens.has(f.key) ? ' <span class="chip warn">depends on estimated pixel size</span>' : ""}</li>`).join("")}</ul>`;
@@ -149,7 +185,20 @@
     }).join("");
   }
   $("#dsets").addEventListener("change", (e) => { const id = e.target.dataset.id; if (!id) return; e.target.checked ? selected.add(id) : selected.delete(id); render(); });
-  $("#dsets").addEventListener("click", (e) => { const id = e.target.dataset.remove; if (!id) return; const i = DS.findIndex((d) => d.id === id); if (i >= 0) DS.splice(i, 1); selected.delete(id); render(); });
+  $("#dsets").addEventListener("click", (e) => {
+    const form = e.target.closest("form.pxform");
+    if (form && e.target.dataset.pick) { form.querySelector("input").value = e.target.dataset.pick; form.querySelector("input").focus(); return; }
+    if (form && e.target.dataset.estimate) { answerPx(DS.find((d) => d.id === form.dataset.px), null); return; }
+    const id = e.target.dataset.remove; if (!id) return; const i = DS.findIndex((d) => d.id === id); if (i >= 0) DS.splice(i, 1); selected.delete(id); render();
+  });
+  $("#dsets").addEventListener("submit", (e) => {
+    const form = e.target.closest("form.pxform"); if (!form) return;
+    e.preventDefault();
+    const v = Number(form.querySelector("input").value);
+    if (!(v >= 0.05 && v <= 5)) { form.querySelector("input").setCustomValidity("Enter a value between 0.05 and 5 µm per pixel."); form.reportValidity(); return; }
+    answerPx(DS.find((d) => d.id === form.dataset.px), v);
+  });
+  $("#dsets").addEventListener("input", (e) => { if (e.target.matches(".pxform input")) e.target.setCustomValidity(""); });
 
   // ---- comparison plots ----
   const CLAIMS = [

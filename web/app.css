@@ -132,3 +132,7 @@ textarea.summary { width: 100%; min-height: 120px; font: 12px var(--f-data); col
 .problem { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; width: 100%; }
 .problem > div { min-width: 0; }
 .bad-text { color: var(--bad); }
+.pxform { display: grid; gap: 8px; font-size: 13px; background: var(--warn-bg); border-radius: 8px; padding: 10px 12px; }
+.pxform .row { gap: 6px; }
+.pxform input { width: 7.5em; }
+.pxform button { font-size: 13px; padding: 6px 10px; }

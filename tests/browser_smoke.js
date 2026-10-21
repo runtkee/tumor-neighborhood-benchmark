@@ -38,7 +38,12 @@ chrome.stderr.on("data", async (d) => {
       const doc = await send("DOM.getDocument"); const node = await send("DOM.querySelector", { nodeId: doc.root.nodeId, selector: "#file" });
       await send("DOM.setFileInputFiles", { files: [f], nodeId: node.nodeId });
       await until(`document.querySelectorAll('#dsets .dset').length > ${before} && ![...document.querySelectorAll('#dsets .chip')].some(c=>/analysing/i.test(c.innerText))`, 180000);
-      await report("added " + path.basename(f));
+      if (await evalJS("[...document.querySelectorAll('#dsets .chip')].some(c=>/needs pixel size/i.test(c.innerText))")) {
+        await report("added " + path.basename(f) + " (asks for pixel size)");
+        await evalJS("(() => { const f = [...document.querySelectorAll('form.pxform')].pop(); f.querySelector('input').value = '0.5'; f.requestSubmit(); })()");
+        await until("![...document.querySelectorAll('#dsets .chip')].some(c=>/analysing|needs pixel size/i.test(c.innerText))", 180000);
+        await report("after entering 0.5 µm per pixel");
+      } else await report("added " + path.basename(f));
     }
     const okExample = okStart;
     console.log("\nconsole errors:", errors.length ? errors : "none");

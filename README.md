@@ -17,7 +17,7 @@ The page opens with the public datasets in the left panel, each with its summary
 - The optional summary export holds per-patient effect sizes with random patient codes. The key linking codes to patients stays with you.
 
 ## How files are read
-There are no settings. The app decides how to read a file from its column names and from sample values taken across the whole file. Files are often sorted, so it doesn't rely on the first rows. "How this file was read" shows every decision, its evidence and a confidence level.
+There are no settings, apart from the pixel size question below. The app decides how to read a file from its column names and from sample values taken across the whole file. Files are often sorted, so it doesn't rely on the first rows. "How this file was read" shows every decision, its evidence and a confidence level.
 
 | Decision | How |
 |---|---|
@@ -31,7 +31,7 @@ There are no settings. The app decides how to read a file from its column names 
 - **HALO exports that name markers only by dye** ("Dye 3 Positive"). The file never says which antibody Dye 3 is, so the app explains this and asks for an export with marker names or a phenotype column.
 - **Tables with intensities but no cell types.** The app doesn't assign cell types from raw intensities.
 
-**Pixel size is the main approximation.** When a file doesn't state units, the size of a pixel has to be estimated from how densely cells are packed. Since the 10 and 30 µm thresholds depend on it, the app reruns the analysis at −20% and +25% pixel size and marks any finding that changes.
+**Pixel size is the one thing the app may ask for.** When a file doesn't state units and the format isn't recognised, the app asks how many µm one pixel is, because the 10 and 30 µm thresholds depend on it. It pre-fills an estimate from cell spacing and offers matching instrument values. If the user keeps the estimate, the analysis is also rerun at −20% and +25%, and any finding that changes is flagged. Entered values still go through the cell-spacing check.
 
 Tested: automatic reading of the raw CODEX (35 patients) and IMMUcan (179 patients) files reproduces the hand-reviewed reference exactly. HALO-style, QuPath-style and inForm exports, sorted files, and refusals are covered in `tests/test_automap.py`.
 

@@ -279,7 +279,8 @@
       } else {
         const est = 8 / spacingAt1;
         const near = INSTRUMENTS.filter(([v]) => Math.abs(v - est) / v <= 0.2);
-        cfg._pxEstimated = true;
+        cfg._pxEstimated = true; cfg._pxEstimate = +est.toFixed(4);
+        cfg._pxCandidates = INSTRUMENTS.map(([v, n]) => ({ um: v, name: n, near: Math.abs(v - est) / v <= 0.2 }));
         if (near.length === 1) { cfg.pixel_size_um = near[0][0]; say("Units", `${near[0][0]} µm per pixel (${near[0][1]}, estimated)`, `the file doesn't state units; cell spacing implies about ${est.toFixed(3)} µm per pixel, and this is the only common value within 20%`, "medium"); }
         else { cfg.pixel_size_um = +est.toFixed(4); say("Units", `about ${est.toFixed(3)} µm per pixel (estimated)`, `the file doesn't state units; estimated from cell spacing (cells about 8 µm apart)` + (near.length ? `. Could be ${near.map(([v, n]) => `${v} (${n})`).join(" or ")}` : "") + ". Results are also recomputed at ±20% to show whether conclusions depend on it.", "low"); }
       }
