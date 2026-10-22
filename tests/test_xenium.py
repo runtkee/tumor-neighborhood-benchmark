@@ -697,8 +697,8 @@ def test_annotate_and_report_outputs_are_unchanged(tmp_path):
     a0 = read_bundle(tmp_path / "outs")
     h = lambda x: hashlib.sha256(x.encode()).hexdigest()[:16]
     # Updated for the robust reference maximum + per-cell T subsets + the new "T" label: the cell-method labels and the
-    # fired matrix are unchanged (Treg rule v2: FOXP3 >= 2 and no CD8 changed the cluster labels and the rule text in params); its params (new rule keys) and report (a "T" row in the label counts) differ; the cluster labels differ.
-    expect = {"cell": {"fired": "c04ee0e8b5c22d51", "labels": "5a306a86000c443f", "params": "716ca1631e5903ac", "report": "86fb2e3352d7d87e"},
+    # fired matrix are unchanged (Treg rule v2: FOXP3 >= 2 and no CD8 changed the cluster labels and the rule text in params); its params (new rule keys) and report (a "T" row in the label counts) differ; the cluster labels differ. Cell method (rule now shared with the cluster method: Treg FOXP3 >= 2 and no CD8, no evidence -> T): its labels, params (t_default_cd4 counts T) and report (rule text, T row) differ; fired is unchanged.
+    expect = {"cell": {"fired": "c04ee0e8b5c22d51", "labels": "41aaa5d574432f01", "params": "534fae21d4201747", "report": "7802701856d3f434"},
               "cluster": {"fired": "c04ee0e8b5c22d51", "labels": "51497821bc9803fd", "params": "47545c5adf7bbb9e", "report": "c02077d4baf63f22"}}
     for meth, exp in expect.items():
         a = a0.copy()
@@ -1075,3 +1075,47 @@ def test_t_subset_treg_needs_two_foxp3_and_no_cd8():
     assert f(IL2RA=1, CTLA4=1, CD4=1) == "CD4T"             # no-FOXP3 panels: same >= 2 and CD8 exclusion
     assert f(IL2RA=2, CTLA4=2, CD4=1, CD8A=1) == "T"   # CD8 = CD4 tie, not Treg
     assert f(IL2RA=2, CTLA4=2, CD4=1) == "Treg"
+
+
+def test_cell_method_t_subsets_use_the_cluster_rule():
+    """Cell method: no subset evidence -> plain T (not CD4T); one FOXP3 count is not a Treg; FOXP3 >= 2 with CD8 is not a Treg."""
+    rng = np.random.default_rng(9)
+    genes = ["EPCAM", "KRT8", "KRT18", "CD3D", "CD3E", "CD3G", "CD2", "CD4", "CD8A", "CD8B", "FOXP3", "IL2RA", "CTLA4", "ACTB", "GAPDH"]
+    g = {x: i for i, x in enumerate(genes)}
+    plan = {"none": 200, "foxp3_1": 200, "treg": 200, "foxp3_cd8": 200, "cd8": 200, "cd4": 200}
+    rows, kinds = [], []
+    n_epi = 1500
+    M = rng.poisson(0.004, (n_epi, len(genes))).astype(np.float32)
+    M[:, [g["ACTB"], g["GAPDH"]]] += rng.poisson(12, (n_epi, 2))
+    M[:, [g["EPCAM"], g["KRT8"], g["KRT18"]]] += rng.poisson(4, (n_epi, 3))
+    rows.append(M)
+    kinds += ["epi"] * n_epi
+    for k, n in plan.items():
+        M = np.zeros((n, len(genes)), np.float32)
+        M[:, [g["ACTB"], g["GAPDH"]]] += rng.poisson(12, (n, 2))
+        M[:, [g["CD3D"], g["CD3E"], g["CD3G"], g["CD2"]]] += 3
+        if k == "foxp3_1":
+            M[:, g["FOXP3"]] = 1
+        if k == "treg":
+            M[:, g["FOXP3"]] = 3
+        if k == "foxp3_cd8":
+            M[:, g["FOXP3"]] = 3
+            M[:, g["CD8A"]] = 3
+        if k == "cd8":
+            M[:, g["CD8A"]] = 3
+        if k == "cd4":
+            M[:, g["CD4"]] = 3
+        rows.append(M)
+        kinds += [k] * n
+    a = ad.AnnData(sparse.csr_matrix(np.vstack(rows)), var=pd.DataFrame(index=genes))
+    a.obs_names = [f"c{i}" for i in range(a.n_obs)]
+    a = annotate(a, method="cell")
+    lab, kinds = a.obs["annotation"].astype(str).to_numpy(), np.array(kinds)
+    want = {"none": "T", "foxp3_1": "T", "treg": "Treg", "foxp3_cd8": "CD8T", "cd8": "CD8T", "cd4": "CD4T"}
+    for k, w in want.items():
+        assert (lab[kinds == k] == w).mean() > 0.95, (k, w)
+    P = json.loads(a.uns["annotation_params"])
+    assert P["method"] == "cell" and P["t_default_cd4"] == (lab == "T").sum()
+    from bio.annotate import report_text
+    txt = report_text(annotate_report(a))
+    assert "labelled CD4T by default" not in txt and "have no subset evidence" in txt

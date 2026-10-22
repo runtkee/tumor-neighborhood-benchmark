@@ -13,6 +13,7 @@
   --ds-spatch-1: #a86f00; --ds-spatch-2: #eda100; --ds-spatch-3: #f5c451; --ds-spatch-4: #7a5200;
   --ds-marteau-1: #4a3aa7; --ds-marteau-2: #8f82e6;
   --ds-cervilla-1: #b8461a; --ds-cervilla-2: #eb6834; --ds-cervilla-3: #f39a72; --ds-cervilla-4: #8a3412;
+  --ds-10x-lung: #c0352f;
   --ds-mxen-1: #0b7a55; --ds-mxen-2: #1baf7a; --ds-mxen-3: #6fd3ac;
   --c2: #e87ba4; --c3: #7d1757; --c4: #d55181;   /* further loaded datasets (magenta shades) */
   --ref-strong: #0e4d29;     /* median line of public datasets */
@@ -32,6 +33,7 @@
     --ds-spatch-1: #c98500; --ds-spatch-2: #eda100; --ds-spatch-3: #f5c451; --ds-spatch-4: #a86f00;
     --ds-marteau-1: #6c5ce0; --ds-marteau-2: #a69cf0;
     --ds-cervilla-1: #d95926; --ds-cervilla-2: #f0855a; --ds-cervilla-3: #f6b393; --ds-cervilla-4: #b8461a;
+    --ds-10x-lung: #e66767;
     --ds-mxen-1: #199e70; --ds-mxen-2: #3fcf96; --ds-mxen-3: #8de3c0;
     --c2: #f7a3cf; --c3: #c2408a; --c4: #e87ba4;
     color-scheme: dark;
@@ -45,6 +47,7 @@
   --ds-spatch-1: #c98500; --ds-spatch-2: #eda100; --ds-spatch-3: #f5c451; --ds-spatch-4: #a86f00;
   --ds-marteau-1: #6c5ce0; --ds-marteau-2: #a69cf0;
   --ds-cervilla-1: #d95926; --ds-cervilla-2: #f0855a; --ds-cervilla-3: #f6b393; --ds-cervilla-4: #b8461a;
+  --ds-10x-lung: #e66767;
   --ds-mxen-1: #199e70; --ds-mxen-2: #3fcf96; --ds-mxen-3: #8de3c0;
   --c2: #f7a3cf; --c3: #c2408a; --c4: #e87ba4;
     color-scheme: dark;

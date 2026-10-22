@@ -13,6 +13,7 @@ roles:
   CD4T: "T:CD4"
   CD8T: "T:CD8"
   Treg: "T:Treg"
+  T: "T"
   Neutrophil: "neut"
   Macrophage: "mac"
   B: "B"

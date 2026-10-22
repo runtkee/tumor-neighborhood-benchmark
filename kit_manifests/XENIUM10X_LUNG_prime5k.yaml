@@ -1,0 +1,46 @@
+# Draft written by `python -m bio.kit xenium`. Labels are marker calls; review the roles and the marker-leakage table in
+# XENIUM10X_LUNG_prime5k_annotation_report.txt before running. Epithelial -> tumor does not separate malignant from normal cells.
+# obs columns: patient = full section name (sections stay separate images); sample; patient_id = the name without its _c / _m / _n suffix (links the sections of one patient); tissue = core (_c) / margin (_m) / normal (_n) / unknown. The suffix meaning is our reading of the names, not stated by the deposit.
+# section -> patient_id / tissue: XENIUM10X_LUNG -> XENIUM10X_LUNG/unknown
+# NOTE: lineages with <2 markers in this panel (and no specific single marker) cannot be called: SMC, Plasma, Monocyte.
+dataset: "XENIUM10X_LUNG_prime5k"
+modality: rna
+path: "data/xenium_10x/kit/XENIUM10X_LUNG_prime5k.h5ad"
+columns: {patient: "XENIUM10X_LUNG", field: "XENIUM10X_LUNG_prime5k", x: "obsm:spatial:0", y: "obsm:spatial:1", type: annotation}   # one patient, one section
+pixel_size_um: 1.0   # Xenium centroids are already in µm
+identity_genes: [CD3E, CD3G, CD2, CD247]
+roles:
+  CD4T: "T:CD4"
+  CD8T: "T:CD8"
+  Treg: "T:Treg"
+  T: "T"
+  Neutrophil: "neut"
+  Macrophage: "mac"
+  B: "B"
+  Plasma: "B"
+  Fibroblast: "stroma"
+  SMC: "stroma"
+  Epithelial: "tumor"
+  Endothelial: "other"
+  Monocyte: "other"
+  DC: "other"
+  Mast: "other"
+  NK: "other"
+  Unclustered: "other"
+  Ambiguous: "other"
+  LowCount: "other"
+states:
+  prolif: [MKI67, TOP2A, CDK1, PCNA, MCM2, TYMS]
+  PD1: [PDCD1]
+  GZMB: [GZMB]
+  LAG3: [LAG3]
+  ICOS: [ICOS]
+bleed:
+  neut: [CSF3R, CXCR1, CXCR2, FCGR3B, FPR1]
+  mac: [CD68, CD163, MRC1]
+  stroma: [PDGFRA, PDGFRB]
+mac_states:
+  PDL1: [CD274]
+  IDO1: [IDO1]
+  M2: [CD163, MRC1, MSR1]
+mac_identity_genes: [CD68, CD14, CSF1R]

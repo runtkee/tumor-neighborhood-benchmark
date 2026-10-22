@@ -28,6 +28,7 @@ LABELS = {  # id -> (label, short label for plot columns)
     "CERVILLA_LUNG_xenium5k": ("Cervilla lung · Xenium", "Cervilla lung"),
     "CERVILLA_BREAST_xenium5k": ("Cervilla breast · Xenium", "Cervilla breast"),
     "CERVILLA_OVARIAN_xenium5k": ("Cervilla ovary · Xenium", "Cervilla ovary"),
+    "XENIUM10X_LUNG_prime5k": ("10x lung adeno · Xenium", "10x lung"),
     "MARTEAU_XENIUM_core": ("Marteau colorectal · Xenium · tumor core", "Marteau X core"),
     "MARTEAU_XENIUM_margin": ("Marteau colorectal · Xenium · invasive margin", "Marteau X margin"),
     "MARTEAU_XENIUM_normal": ("Marteau colorectal · Xenium · adjacent normal", "Marteau X normal"),
@@ -45,6 +46,7 @@ SOURCE = [
     ("MARTEAU_XENIUM_core", {"source": "Marteau et al. 2025 Xenium", "detail": "colorectal", "part": "tumor-core"}),
     ("MARTEAU_XENIUM_margin", {"source": "Marteau et al. 2025 Xenium", "detail": "colorectal", "part": "margin"}),
     ("MARTEAU_XENIUM_normal", {"source": "Marteau et al. 2025 Xenium", "detail": "colorectal", "part": "adjacent-normal"}),
+    ("XENIUM10X", {"source": "10x Genomics Xenium Prime 5K", "detail": "lung adenocarcinoma"}),
     ("CERVILLA", {"source": "Cervilla et al. 2025 Xenium 5K", "detail": ""}),
 ]
 

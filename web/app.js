@@ -11,6 +11,7 @@
     SPATCH_COAD_xenium5k: "--ds-spatch-1", SPATCH_COAD_cosmx6k: "--ds-spatch-2", SPATCH_OV_xenium5k: "--ds-spatch-3", SPATCH_HCC_xenium5k: "--ds-spatch-4",
     MARTEAU_CRC_IMC_core: "--ds-marteau-1", MARTEAU_CRC_IMC_margin: "--ds-marteau-2",
     CERVILLA_COLORECTAL_xenium5k: "--ds-cervilla-1", CERVILLA_LUNG_xenium5k: "--ds-cervilla-2", CERVILLA_BREAST_xenium5k: "--ds-cervilla-3", CERVILLA_OVARIAN_xenium5k: "--ds-cervilla-4",
+    XENIUM10X_LUNG_prime5k: "--ds-10x-lung",
     MARTEAU_XENIUM_core: "--ds-mxen-1", MARTEAU_XENIUM_margin: "--ds-mxen-2", MARTEAU_XENIUM_normal: "--ds-mxen-3",
   };
   const HIGHLIGHT = new Set(["down", "up", "change"]);  // findings shown on the card; the rest sit under "more"

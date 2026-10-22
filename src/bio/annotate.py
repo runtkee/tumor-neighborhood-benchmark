@@ -336,16 +336,11 @@ def annotate(adata, min_counts=20, method="auto"):
     clusters, absent, ref_info = [], [], None
     if method == "cell":
         label = lin.copy()
-        # T subsets
+        # T subsets: the same per-cell rule as the cluster method (T_SUBSET_RULE)
         is_t = (lin == "T") & ~none_fired & ~tie
-        cd8 = ex.get("CD8A", 0) + ex.get("CD8B", 0)
-        cd4 = ex.get("CD4", np.zeros(n, np.float32))
-        cd8 = cd8 if isinstance(cd8, np.ndarray) else np.zeros(n, np.float32)
-        foxp3 = ex.get("FOXP3", np.zeros(n, np.float32)) > 0
-        il2ra_ctla4 = (ex.get("IL2RA", np.zeros(n, np.float32)) > 0) & (ex.get("CTLA4", np.zeros(n, np.float32)) > 0)
-        sub = np.where(cd8 > cd4, "CD8T", np.where(foxp3 | il2ra_ctla4, "Treg", "CD4T"))
+        sub = _t_subset(ex, n)
         label[is_t] = sub[is_t]
-        t_default = int((is_t & (cd8 == 0) & (cd4 == 0) & ~foxp3 & ~il2ra_ctla4).sum())
+        t_default = int((sub[is_t] == "T").sum())
         n_t = int(is_t.sum())
         label[none_fired | tie] = "Ambiguous"
         note = np.where(none_fired, "no lineage fired", np.where(tie, "tie", ""))
@@ -549,13 +544,14 @@ def report_text(rep, name=""):
         if gs:
             L.append(f"Not used for {l} (ambient immunoglobulin transcripts, present in tumour tissue everywhere): {', '.join(gs)}.")
     L.append("Plasma uses JCHAIN and MZB1 only, and needs both (XBP1 and SDC1 are also expressed by epithelium and other cells).")
+    rule = ("Treg if FOXP3 count >= 2 and CD8A+CD8B = 0 (panels without FOXP3: IL2RA >= 2 and CTLA4 >= 2, same CD8 exclusion); else CD8T if CD8A+CD8B > CD4; "
+            "else CD4T if CD4 > CD8A+CD8B; else T (subset unknown). ")
     if method == "cell":
-        L += ["", "T subsets: CD8T if CD8A+CD8B > CD4; Treg if FOXP3 detected or IL2RA and CTLA4 both detected; else CD4T."]
+        L += ["", "T subsets (per cell): " + rule.rstrip()]
     else:
         L += ["", "T subsets (" + ("cluster method: the cluster decides T, each cell its subset; cell method in sections without clusters"
                                    if method == "mixed" else "the cluster decides T, each cell inside it decides its subset")
-              + "): Treg if FOXP3 count >= 2 and CD8A+CD8B = 0 (panels without FOXP3: IL2RA >= 2 and CTLA4 >= 2, same CD8 exclusion); else CD8T if CD8A+CD8B > CD4; "
-                "else CD4T if CD4 > CD8A+CD8B; else T (subset unknown). "
+              + "): " + rule +
                 f"A cluster is NK only if its T value is < {CL_NK_T_RATIO:g}x its NK value and {CL_NK_MIN_SPECIFIC} NK markers "
                 "besides GNLY are enriched; otherwise T."]
     have = rep["t_subset_genes_present"]
@@ -566,8 +562,8 @@ def report_text(rep, name=""):
         L.append(f"  {rep['t_no_subset']} of {n_tc} T cells ({100 * rep['t_no_subset'] / n_tc:.0f}%) have no subset evidence "
                  "(no FOXP3, and CD8A+CD8B = CD4, e.g. no counts of either) and are labelled T; treat the CD4T/CD8T/Treg split as soft.")
     if n_tl:
-        L.append(f"  {rep['t_default_cd4']} of {n_tl} T cells ({100 * rep['t_default_cd4'] / n_tl:.0f}%) have no CD4, "
-                 "CD8A/B, FOXP3 or IL2RA+CTLA4 counts and were labelled CD4T by default; treat the CD4T/CD8T split as soft.")
+        L.append(f"  {rep['t_default_cd4']} of {n_tl} T cells ({100 * rep['t_default_cd4'] / n_tl:.0f}%) have no subset evidence "
+                 "(no FOXP3, and CD8A+CD8B = CD4, e.g. no counts of either) and are labelled T; treat the CD4T/CD8T/Treg split as soft.")
     spec = rep["specificity"]
     star = f"'*' = above {100 * UNRELIABLE_FRAC:.0f}%; " if method != "cluster" else "no '*' flags here, the cluster method flags lineages by cluster ratio (below); "
     L += ["", f"Marker leakage (per-cell firing of each lineage's markers inside each label): % of cells of each label (columns) "
