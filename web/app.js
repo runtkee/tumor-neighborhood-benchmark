@@ -22,6 +22,30 @@
   // ---- datasets ----
   const DS = [];  // {id, label, short, kind, status, rows, findings, sens, report, checks, fails, meta, color, n, progress}
   const selected = new Set();
+  // Display mode for numbers that exist as both a count and a percent. One global choice, remembered in the browser when allowed.
+  let mode = "count";
+  try { if (localStorage.getItem("tnb-number-mode") === "percent") mode = "percent"; } catch (e) { /* storage blocked: default stays */ }
+  const TOG_TITLE = () => (mode === "count" ? "Click to show as percent" : "Click to show as count");
+  const tog = (inner) => `<button type="button" class="tog" title="${TOG_TITLE()}">${inner}</button>`;
+  // Wrap the number part of a finding sentence in a toggle: "N of M patients", or the median part of the composition sentence.
+  const togFinding = (f) => {
+    const t = esc(mode === "percent" ? f.textPct || f.text : f.textCount || f.text);
+    if (!f.textPct && !f.textCount) return t;
+    if (f.key === "compNest") return t.replace(/(median .*?)(\.?(?: \(\d+ patients?, [^)]*\))?\.?)$/, (_, a, b) => tog(a) + b);
+    return t.replace(/(\d[\d,]*(?: of |% of )\d[\d,]* patients)/g, (m) => tog(m));
+  };
+  function setMode(m, refocus) {
+    mode = m;
+    try { localStorage.setItem("tnb-number-mode", m); } catch (e) { /* ignore */ }
+    render();
+    if (refocus !== undefined) { const b = document.querySelectorAll(".tog")[refocus]; if (b) b.focus(); }
+  }
+  document.addEventListener("click", (e) => {
+    const t = e.target.closest && e.target.closest(".tog");
+    if (t) { const idx = [...document.querySelectorAll(".tog")].indexOf(t); setMode(mode === "count" ? "percent" : "count", idx); return; }
+    const seg = e.target.closest && e.target.closest("[data-mode]");
+    if (seg && seg.dataset.mode !== mode) setMode(seg.dataset.mode);
+  });
   for (const d of REF.datasets) {
     const rows = d.data.map((v) => { const r = { dataset: d.id }; d.cols.forEach((c, i) => { r[c] = v[i]; }); return r; });  // columnar in the page, row objects here
     DS.push({ id: d.id, label: d.label, short: d.short, kind: "public", status: "ready", rows, n: d.n, findings: Findings.summarize(rows), color: `var(${DS_COLOR[d.id] || "--ref"})` });
@@ -261,7 +285,7 @@
       else if (d.status === "failed") body = `<ul class="fails">${(d.fails || []).slice(0, 3).map((f) => `<li><b>${esc(f.title)}</b>${f.fix ? `<br><span class="hint">${esc(f.fix)}</span>` : ""}</li>`).join("")}</ul>`;
       else if (d.findings.every((f) => f.status === "na" || f.key === "compartments")) body = `<p class="hint">${d.n < 5 ? `Only ${d.n} patient${d.n === 1 ? "" : "s"}: shown in the charts, too few for summary findings.` : "No summary findings for this dataset."}</p>`;
       else {
-        const li = (f) => `<li class="f-${f.status}">${esc(f.text)}${d.sens && d.sens.has(f.key) ? ' <span class="chip warn">depends on estimated pixel size</span>' : ""}</li>`;
+        const li = (f) => `<li class="f-${f.status}">${togFinding(f)}${d.sens && d.sens.has(f.key) ? ' <span class="chip warn">depends on estimated pixel size</span>' : ""}</li>`;
         const shown = d.findings.filter((f) => f.status !== "na");
         let top = shown.filter((f) => HIGHLIGHT.has(f.status)).slice(0, 3); if (!top.length) top = shown.slice(0, 2);
         const rest = shown.filter((f) => !top.includes(f));
@@ -337,17 +361,20 @@
     const out = []; for (let t = Math.ceil(lo / step) * step; t <= hi + 1e-9; t += step) out.push(+t.toFixed(10));
     return out;
   }
+  const metricUnitAxis = (m) => (m.endsWith("_log2") ? "log2 vs chance" : "percentile points");
+  const metricUnit = (m) => (m.endsWith("_log2") ? "log2" : "pct-pts");
   function strip(m, sets) {
     const cols = sets.map((d) => [d, vals(d.rows, m)]).filter(([, v]) => v.length);
     if (!cols.length) return "";
     const all = cols.flatMap(([, v]) => v).concat([0]);
     let lo = quant(all, 0.01), hi = quant(all, 0.99); if (hi - lo < 1e-9) { lo -= 1; hi += 1; }
     const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
-    const W = 425, H = 212, L = 50, R = 10, T = 12, B = 50, cw = (W - L - R) / cols.length;  // 25% larger than before
+    const W = 425, H = 212, L = 58, R = 10, T = 12, B = 50, cw = (W - L - R) / cols.length;  // 25% larger than before
     const y = (v) => T + (H - T - B) * (1 - (Math.min(Math.max(v, lo), hi) - lo) / (hi - lo));
     let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(metricLabel(m))}">`;
     for (const t of niceTicks(lo, hi, 4)) svg += `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="var(--line)" stroke-width="${t === 0 ? 1.6 : 0.9}"/>` +
       `<text x="${L - 6}" y="${y(t) + 4}" text-anchor="end" font-size="12" fill="var(--muted)" font-family="var(--f-data)">${t}</text>`;
+    svg += `<text transform="translate(11 ${(T + H - B) / 2}) rotate(-90)" text-anchor="middle" font-size="11" fill="var(--muted)" font-family="var(--f-body)">${esc(metricUnitAxis(m))}</text>`;
     cols.forEach(([d, v], i) => {  // median line first, so the patient dots sit on top of it
       const cx = L + cw * (i + 0.5), loaded = d.kind !== "public";
       const md = quant(v, 0.5);
@@ -369,7 +396,7 @@
       if (v.length && v.length < 5) { cls = "warn"; txt = `only ${v.length} patient${v.length > 1 ? "s" : ""}`; }
       else if (v.length && pub.length < 5) txt = anyPublic ? "public reference not yet computed for this measure" : "no public counterpart selected";
       else if (v.length) { const md = quant(v, 0.5), lo = quant(pub, 0.1), hi = quant(pub, 0.9); [cls, txt] = md < lo ? ["fail", "below public range"] : md > hi ? ["fail", "above public range"] : ["pass", "within public range"]; }
-      return `<span class="vd"><i class="swatch" style="background:${d.color}"></i>${esc(d.short)}: <span class="chip ${cls}">${esc(txt)}</span> <span class="num muted">median ${fmt(quant(v, 0.5))}</span></span>`;
+      return `<span class="vd"><i class="swatch" style="background:${d.color}"></i>${esc(d.short)}: <span class="chip ${cls}">${esc(txt)}</span> <span class="num muted">median ${fmt(quant(v, 0.5))} ${metricUnit(m)}</span></span>`;
     }).join("");
   }
   // Pooled estimate under the sparse nest contact charts (recipe v3p.1): shown only for datasets that carry the pooled sums.
@@ -387,9 +414,9 @@
       if (!p || p.n_near < 1) continue;
       const cnt = `${p.n_near.toLocaleString("en-US")} cells, ${p.patients} patient${p.patients === 1 ? "" : "s"}`, dot = `<i class="swatch" style="background:${d.color}"></i>${esc(d.short)}`;
       if (p.n_near < POOL_MIN_CELLS || p.patients < 5 || !Number.isFinite(p.diff)) { parts.push(`<span class="num">${dot}</span> <span class="muted">too few to pool (${cnt})</span>`); continue; }
-      const ci = Number.isFinite(p.lo) && Number.isFinite(p.hi) ? `, 95% CI ${fmt(p.lo, 1)} to ${fmt(p.hi, 1)}` : "";
+      const ci = Number.isFinite(p.lo) && Number.isFinite(p.hi) ? `, 95% CI ${fmt(p.lo, 1)} to ${fmt(p.hi, 1)} pct-pts` : "";
       est = true;
-      parts.push(`<span class="num">${dot} ${fmt(p.diff, 1)}</span>${ci} <span class="muted">(${cnt})</span>`);
+      parts.push(`<span class="num">${dot} ${fmt(p.diff, 1)} pct-pts</span>${ci} <span class="muted">(${cnt})</span>`);
     }
     return parts.length ? `<div class="hint pooled">Pooled across patients${est ? " (pct-pts)" : ""}: ${parts.join(" · ")}.${est ? " Pooled estimate, not per patient." : ""}</div>` : "";
   }
@@ -399,16 +426,24 @@
   const COMP_NOTE = "Tumor nest = tumor cells make up at least half of the cells within 50 µm. Chance level is computed by shuffling labels within each compartment. " +
     "On whole sections the nest can include normal epithelium when the labels do not separate malignant cells. A nest proximity value can read as avoidance when the structure lies inside the nest; " +
     "the distance gradient and contact tests are the more direct readouts there.";
+  const pctMode = () => mode === "percent";
   const hasComp = (d) => d.rows.some((r) => "comp_nest_cells" in r);
   const fmtPct = (v) => (v >= 10 ? String(Math.round(v)) : v.toFixed(1));
+  const fmtCount = (v) => Math.round(v).toLocaleString("en-US");   // cells are whole numbers
   function compositionTable(d) {
     const COLS = [["T", "T cells"], ["CD8", "CD8"], ["CD4", "CD4"], ["Treg", "Treg"], ["neut", "neutrophils"], ["mac", "macrophages"], ["B", "B cells"]];
     const cols = COLS.filter(([k]) => d.rows.some((r) => `comp_nest_pct_${k}` in r || `comp_margin_pct_${k}` in r || `comp_far_pct_${k}` in r));
-    const head = `<tr><th>compartment</th><th class="num">cells</th>${cols.map(([, n]) => `<th class="num">${esc(n)}</th>`).join("")}</tr>`;
+    const head = `<tr><th>compartment</th><th class="num">Cells (count)</th>${cols.map(([, n]) => `<th class="num">${esc(n)}</th>`).join("")}</tr>`;
+    const pct = mode === "percent";
     const body = [["nest", "Tumor nest"], ["margin", "Margin (within 100 µm of the nest)"], ["far", "Far tissue"]].map(([c, name]) => {
       const cells = vals(d.rows, `comp_${c}_cells`);
-      const tds = cols.map(([k]) => { const v = vals(d.rows, `comp_${c}_pct_${k}`); return v.length ? `<td class="num"><b>${fmtPct(quant(v, 0.5))}</b> <span class="muted">${fmtPct(quant(v, 0.25))}–${fmtPct(quant(v, 0.75))}</span></td>` : '<td class="num muted">—</td>'; });
-      return `<tr><td>${name}</td><td class="num">${cells.length ? Math.round(quant(cells, 0.5)).toLocaleString() : "—"}</td>${tds.join("")}</tr>`;
+      const tds = cols.map(([k]) => {
+        const v = pct ? vals(d.rows, `comp_${c}_pct_${k}`) : Findings.perPatientCounts(d.rows, c, k).filter(Number.isFinite);
+        if (!v.length) return '<td class="num muted">—</td>';
+        const f = pct ? (x) => fmtPct(x) + "%" : fmtCount;
+        return `<td class="num">${tog(`<b>${f(quant(v, 0.5))}</b> <span class="muted">(${f(quant(v, 0.25))}–${f(quant(v, 0.75))})</span>`)}</td>`;
+      });
+      return `<tr><td>${name}</td><td class="num">${cells.length ? Math.round(quant(cells, 0.5)).toLocaleString("en-US") : "—"}</td>${tds.join("")}</tr>`;
     }).join("");
     return `<div class="comptable"><div class="comp-cap"><i class="swatch" style="background:${d.color}"></i><b>${esc(d.label)}</b> <span class="muted num">(${d.n} patients)</span></div>` +
       `<div class="tablewrap"><table>${head}${body}</table></div></div>`;
@@ -418,7 +453,7 @@
     if (top && !with_.length) return "";
     if (!top && with_.length) return "";
     return `<article class="claim"><div class="claim-head"><h3>Who is in the tumor? Immune composition by compartment</h3>${SCOPE_CHIP.nest}</div>` +
-      (with_.length ? `<p class="muted">Percent of the cells in each compartment (median across patients, then the middle half of patients). Each patient counts once.</p>${with_.map(compositionTable).join("")}` : "") +
+      (with_.length ? `<p class="muted">${pctMode() ? "% of the cells in that compartment" : "Cells per patient"}: median (middle half of patients). The Cells column is the median number of cells in the compartment per patient. Each patient counts once. Click a number to switch between counts and percent.</p>${with_.map(compositionTable).join("")}` : "") +
       (without.length ? `<ul class="nocomp">${without.map((d) => `<li><i class="swatch" style="background:${d.color}"></i><b>${esc(d.label)}</b>: ${d.kind === "loaded" ? "no tumor cells were found, so compartment results are not available." : d.kind === "results" ? "this results table has no compartment results." : "compartment results not yet computed for this dataset."}</li>`).join("")}</ul>` : "") +
       `<p class="hint">${esc(COMP_NOTE)}</p></article>`;
   }
@@ -528,7 +563,11 @@
     if (dl) { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([document.getElementById("sum-" + dl).value], { type: "text/csv" })); a.download = "summary.csv"; document.body.appendChild(a); a.click(); a.remove(); }
   });
 
-  function render() { renderPanel(); renderClaims(); renderDetails(); }
+  function renderModebar() {
+    $("#modebar").innerHTML = `<span class="muted">Show numbers as:</span><span class="seg" role="group" aria-label="Show numbers as">` +
+      ["count", "percent"].map((m) => `<button type="button" data-mode="${m}" aria-pressed="${mode === m}">${m === "count" ? "Counts" : "Percent"}</button>`).join("") + "</span>";
+  }
+  function render() { renderModebar(); renderPanel(); renderClaims(); renderDetails(); }
   $("#recipe-version").textContent = REF.recipe;  // the public reference is measured with the same recipe as the page
   render();
 })();

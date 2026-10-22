@@ -15,6 +15,15 @@
   const hasKey = (rows, k) => rows.some((r) => k in r);
   const pctText = (v) => (v >= 10 ? String(Math.round(v)) : v.toFixed(1)) + "%";
 
+  // Per-patient cell counts for one compartment c ("nest" | "margin" | "far") and group k ("T", "neut", ...):
+  // percent x cells / 100, for the patients that have both numbers. Counts are what the table and the nest sentence show by default.
+  function perPatientCounts(rows, c, k) {
+    const out = [];
+    for (const r of rows) { const p = finite(r[`comp_${c}_pct_${k}`]), n = finite(r[`comp_${c}_cells`]); if (p !== null && n !== null) out.push((p * n) / 100); }
+    return out;
+  }
+  const countText = (v) => Math.round(v).toLocaleString("en-US");   // cells are whole numbers
+
   // ---- pooled estimate for the sparse contact tests (recipe v3p.1; src/bio/pooled.py is the Python twin) ----
   // Same generators as web/recipe.js and src/bio/prng.py (tests/test_validation.js checks they stay identical).
   function fnv1a(s) {
@@ -188,7 +197,17 @@
       const parts = [`${pctText(med("comp_nest_pct_T"))} T cells${subs.length ? ` (${subs.join(", ")})` : ""}`];
       if (vals(rows, "comp_nest_pct_neut").length >= MIN_N) parts.push(`${pctText(med("comp_nest_pct_neut"))} neutrophils`);
       if (vals(rows, "comp_nest_pct_mac").length >= MIN_N) parts.push(`${pctText(med("comp_nest_pct_mac"))} macrophages`);
-      out.push({ key: "compNest", status: "info", text: `Tumor nest: median ${parts.join(", ")}.` });
+      const cmed = (k) => median(perPatientCounts(rows, "nest", k)), cn = (k) => perPatientCounts(rows, "nest", k).length >= MIN_N;
+      let textCount;
+      if (cn("T")) {
+        const csubs = SUBS.filter((s) => cn(s)).map((s) => `${s} ${countText(cmed(s))}`);
+        const cparts = [`${countText(cmed("T"))} T cells${csubs.length ? ` (${csubs.join(", ")})` : ""}`];
+        if (cn("neut")) cparts.push(`${countText(cmed("neut"))} neutrophils`);
+        if (cn("mac")) cparts.push(`${countText(cmed("mac"))} macrophages`);
+        textCount = `Tumor nest: median ${cparts.join(", ")} per patient.`;
+      }
+      const text = `Tumor nest: median ${parts.join(", ")}.`;
+      out.push({ key: "compNest", status: "info", text, textPct: text, ...(textCount ? { textCount } : {}) });
     }
     out.push(...nestContact(rows, "neut", "neutrophils", "neutrophil"), ...nestContact(rows, "mac", "macrophages", "macrophage"));
     for (const [src, partner] of [["neut", "neutrophil"], ["mac", "macrophage"]]) {
@@ -287,12 +306,25 @@
       const parts = [`${pctText(t)} T cells`], nu = one("comp_nest_pct_neut"), ma = one("comp_nest_pct_mac"), mT = one("comp_margin_pct_T");
       if (nu !== null) parts.push(`${pctText(nu)} neutrophils`); if (ma !== null) parts.push(`${pctText(ma)} macrophages`);
       const nn = one("comp_nest_cells"), size = nn !== null ? ` (${Math.round(nn).toLocaleString("en-US")} cells)` : "";
-      out.push({ key: "compNest", status: "info", text: nn !== null && nn < 200 ? `Tumor nest is tiny${size}, so nest results are unreliable (${tag}).` : `Tumor nest${size}: ${parts.join(", ")}${mT !== null ? `; T cells ${pctText(mT)} at the margin` : ""} (${tag}).` });
+      const cnt = (k) => { const p = one(`comp_nest_pct_${k}`); return nn !== null && p !== null ? countText((p * nn) / 100) : null; };
+      const cparts = [`${cnt("T")} T cells`]; if (cnt("neut")) cparts.push(`${cnt("neut")} neutrophils`); if (cnt("mac")) cparts.push(`${cnt("mac")} macrophages`);
+      const ftext = nn !== null && nn < 200 ? `Tumor nest is tiny${size}, so nest results are unreliable (${tag}).` : `Tumor nest${size}: ${parts.join(", ")}${mT !== null ? `; T cells ${pctText(mT)} at the margin` : ""} (${tag}).`;
+      const small = nn !== null && nn < 200;
+      out.push({ key: "compNest", status: "info", text: ftext, ...(!small && nn !== null && cnt("T") ? { textPct: ftext, textCount: `Tumor nest${size}: ${cparts.join(", ")} (${tag}).` } : {}) });
     } else if (!keys.some((k) => /^(comp_|nest_)/.test(k))) out.push({ key: "compartments", status: "info", text: "No tumor nest found in this section, so nest results are not available." });
     return out;
   }
 
   // opts.loaded: the dataset came from the user's own file (explains why compartment results can be missing)
+  // "111 of 145 patients" has a natural percent form, "77% of 145 patients". The count form stays in `text`; the percent form goes in `textPct`.
+  const OF_PATIENTS = /(\d[\d,]*) of (\d[\d,]*) patients/g;
+  function withPercentForms(list) {
+    return list.map((f) => {
+      if (f.textPct || !OF_PATIENTS.test(f.text)) return f;
+      OF_PATIENTS.lastIndex = 0;
+      return { ...f, textPct: f.text.replace(OF_PATIENTS, (_, a, b) => `${Math.round((100 * a.replace(/,/g, "")) / b.replace(/,/g, ""))}% of ${b} patients`) };
+    });
+  }
   function summarize(rows, opts = {}) {
     if (!rows || !rows.length) return [];
     if (rows.length < MIN_N) return fewSummary(rows);
@@ -307,7 +339,7 @@
     if ([...keys].some((k) => /^(comp_|nest_|grad_)/.test(k))) out.push(...nestSentences(rows));
     else out.push({ key: "compartments", status: "info", text: opts.results ? "This results table has no compartment results." : opts.loaded ? "No tumor cells were found in this dataset, so compartment results are not available." : "Compartment results not yet computed for this dataset." });
     out.push(...macState(rows, "TmacTouch"), ...macState(rows, "nest_TmacTouch"));
-    return out.filter(Boolean);
+    return withPercentForms(out.filter(Boolean));
   }
 
   // which findings change when the pixel size is 20% smaller or larger (only used when it was estimated)
@@ -320,6 +352,6 @@
     return changed;
   }
 
-  const api = { summarize, sensitivity, direction, pooled };
+  const api = { summarize, sensitivity, direction, pooled, perPatientCounts, countText };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.Findings = api;
 })(typeof self !== "undefined" ? self : this);

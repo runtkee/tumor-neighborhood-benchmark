@@ -48,9 +48,21 @@ chrome.stderr.on("data", async (d) => {
     // machine-readable end state: one line per dataset in the list, and the rendered details
     const fin = await evalJS(`[...document.querySelectorAll('#dsets .dset')].map(li=>({name:(li.querySelector('.dname')||{}).innerText||'',meta:(li.querySelector('.dmeta')||{}).innerText||'',chips:[...li.querySelectorAll('.chip')].map(c=>c.innerText).join('|'),findings:li.querySelectorAll('.finds li').length,px:!!li.querySelector('form.pxform')})).concat([{details:[...document.querySelectorAll('#details .detail')].map(d=>d.innerText.replace(/\\s+/g,' ')),privacy:document.querySelector('.privacy').innerText,plots:document.querySelectorAll('#claims svg').length}])`);
     console.log("FINAL_STATE " + JSON.stringify(fin));
-    const okExample = okStart;
+    // units: the composition table flips between counts and percent when a .tog is clicked
+    const compText = () => evalJS("(document.querySelector('.comptable table')||{innerText:''}).innerText");
+    const modeOf = async () => evalJS("document.querySelector('.seg [aria-pressed=true]').dataset.mode");
+    let togOk = true;
+    if (await evalJS("!!document.querySelector('.comptable')")) {
+      const before = await compText(), m0 = await modeOf();
+      await evalJS("document.querySelector('.comptable .tog').click()");
+      const after = await compText(), m1 = await modeOf();
+      togOk = m0 === "count" && m1 === "percent" && !/%/.test(before.split("\n").slice(1).join(" ")) && /%/.test(after);
+      console.log("TOGGLE", togOk, JSON.stringify({ m0, m1, before: before.slice(0, 160), after: after.slice(0, 160) }));
+      if (process.env.SHOT_MODE !== "percent") await evalJS("document.querySelector('.comptable .tog').click()");
+    }
+    const okExample = okStart && togOk;
     console.log("\nconsole errors:", errors.length ? errors : "none");
-    if (process.env.SHOT) { await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: Number(process.env.SHOT_H) || 1800, deviceScaleFactor: 1, mobile: false }); await new Promise((r) => setTimeout(r, 800)); const s = await send("Page.captureScreenshot", { format: "png" }); fs.writeFileSync(process.env.SHOT, Buffer.from(s.data, "base64")); }
+    if (process.env.SHOT) { await send("Emulation.setDeviceMetricsOverride", { width: Number(process.env.SHOT_W) || 1440, height: Number(process.env.SHOT_H) || 1800, deviceScaleFactor: 1, mobile: false }); await new Promise((r) => setTimeout(r, 800)); if (process.env.SHOT_SCROLL) await evalJS(`document.querySelector('${process.env.SHOT_SCROLL}').scrollIntoView()`); if (process.env.SHOT_W) console.log("SCROLLW", await evalJS("document.documentElement.scrollWidth"), process.env.SHOT_W); const s = await send("Page.captureScreenshot", { format: "png" }); fs.writeFileSync(process.env.SHOT, Buffer.from(s.data, "base64")); }
     ws.close(); chrome.kill(); setTimeout(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) {} }, 500);
     process.exit(okExample && !errors.length ? 0 : 1);
   };

@@ -171,3 +171,13 @@ textarea.summary { width: 100%; min-height: 120px; font: 12px var(--f-data); col
 .claim details { margin-top: 2px; }
 .claim details .plots { margin-top: 10px; }
 .comptable td.num { white-space: nowrap; }
+
+.modebar { display: flex; gap: 10px; align-items: center; font-size: 13px; }
+.seg { display: inline-flex; }
+.seg button { font-size: 13px; padding: 5px 12px; border-radius: 0; }
+.seg button:first-child { border-radius: 7px 0 0 7px; }
+.seg button:last-child { border-radius: 0 7px 7px 0; border-left: 0; }
+.seg button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.tog { font: inherit; color: inherit; background: none; border: 0; padding: 0; border-radius: 2px; text-align: inherit; cursor: pointer;
+  text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
+button.tog:hover { background: var(--accent-soft); }

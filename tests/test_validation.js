@@ -309,5 +309,16 @@ const run = (text, cfg = CFG) => { const cells = R.importCells(text, cfg); retur
       assert.ok(F.summarize(out.datasets[0].rows, { loaded: true, results: true }).some((x) => x.status !== "na" && x.key !== "compartments"));
     }
   });
+  await test("composition counts = percent x cells / 100 per patient; sentence has count and percent forms", () => {
+    const F = require("../web/findings.js");
+    const rows = [100, 200, 400, 800, 1600, 3200].map((n, i) => ({ patient: "P" + i, comp_nest_cells: n, comp_nest_pct_T: 10, comp_nest_pct_neut: 1, T_near_neut_log2: -1, B_near_neut_log2: 0 }));
+    assert.deepStrictEqual(F.perPatientCounts(rows, "nest", "T"), [10, 20, 40, 80, 160, 320]);
+    assert.deepStrictEqual(F.perPatientCounts([{ comp_nest_cells: 50 }], "nest", "T"), []);
+    const c = F.summarize(rows).find((f) => f.key === "compNest");
+    assert.ok(c.text.includes("median 10% T cells") && c.textPct === c.text, c.text);
+    assert.ok(c.textCount.includes("median 60 T cells") && c.textCount.endsWith("per patient."), c.textCount);
+    const p = F.summarize(rows).find((f) => f.key === "T_near_neut_log2");
+    assert.ok(/6 of 6 patients/.test(p.text) && /100% of 6 patients/.test(p.textPct), p.text + " | " + p.textPct);
+  });
   if (failed) { console.log(`\n${failed} failed`); process.exit(1); } else console.log("\nall validation tests passed");
 })();
