@@ -249,7 +249,9 @@
   }
   const REF_NOTE = refNote(REF.datasets);
   function renderPanel() {
-    $("#dsets").innerHTML = REF_NOTE + DS.map((d) => {
+    // Public datasets too small for summary findings (under 5 patients) go to the bottom, below loaded data.
+    const tooSmall = (d) => d.kind === "public" && d.n < 5;
+    $("#dsets").innerHTML = REF_NOTE + DS.filter((d) => !tooSmall(d)).concat(DS.filter(tooSmall)).map((d) => {
       const [cls, txt] = STATUS_CHIP[d.status];
       const box = `<input type="checkbox" id="sel-${esc(d.id)}" data-id="${esc(d.id)}"${selected.has(d.id) ? " checked" : ""}${d.status !== "ready" ? " disabled" : ""}>`;
       let body = "";
