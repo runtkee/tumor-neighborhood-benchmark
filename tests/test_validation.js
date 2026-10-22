@@ -220,6 +220,19 @@ const run = (text, cfg = CFG) => { const cells = R.importCells(text, cfg); retur
     const rare = poolRows({ all: { GZMB: 7 }, CD8: { GZMB: 7 } }).map((r) => { for (const k of Object.keys(r)) if (/CD8_.*_n$/.test(k) && !/far_n$/.test(k)) r[k] = 1; return r; });
     assert.ok(!require("../web/findings.js").summarize(rare).some((x) => /Pooled_(CD8|subsets)/.test(x.key)));
   });
+  await test("findings: under 5 patients each question is answered with the measured values, marked descriptive", () => {
+    const F = require("../web/findings.js"), base = "nest_neutTouch_GZMB";
+    const r = { patient: "P1", T_near_neut_log2: -0.8, B_near_neut_log2: -0.9, T_near_mac_log2: 0.1, comp_nest_cells: 5000, comp_nest_pct_T: 2,
+      [base + "_n"]: 40, [base + "_near_sum"]: 40 * 58, [base + "_far_n"]: 200, [base + "_far_sum"]: 200 * 50, [base + "_diff"]: 8 };
+    const f = F.summarize([r]), t = f.map((x) => x.text).join("\n");
+    assert.match(t, /^T cells near neutrophils: -0\.80 log2, fewer than chance \(1 patient, descriptive\)\. B cells too \(-0\.90\), so not specific to T cells\.$/m);
+    assert.match(t, /^T cells near macrophages: \+0\.10 log2, about chance \(1 patient, descriptive\)\.$/m);
+    assert.match(t, /^Inside tumor nests, T cells touching neutrophils: granzyme B higher \(\+8\.0 pct-pts\) \(40 cells, 1 patient, descriptive\)\.$/m);
+    assert.match(t, /no cell-death readout/);
+    assert.deepStrictEqual(f.slice(0, 2).map((x) => x.status), ["down", "none"]);
+    r[base + "_n"] = 3;
+    assert.match(F.summarize([r]).map((x) => x.text).join("\n"), /touching neutrophils: only 3 cells, too few to compare\./);
+  });
   await test("findings: B-cell control wording has three tiers (same, weaker, different)", () => {
     const F = require("../web/findings.js");
     const text = (tneg, bneg, bSign = -1, tSign = -1) => F.summarize(Array.from({ length: 30 }, (_, i) =>

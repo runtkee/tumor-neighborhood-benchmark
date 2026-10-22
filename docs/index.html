@@ -1718,9 +1718,77 @@ textarea.summary { width: 100%; min-height: 120px; font: 12px var(--f-data); col
     return out;
   }
 
+  // ---- under 5 patients: no per-patient rule is possible, so each original question is answered with the measured values ----
+  // A log2 value counts as "fewer/more than chance" beyond ±0.3 and a contact difference is named beyond ±5 pct-pts (FEW_LOG2, FEW_PCT).
+  // Status up/down/change only marks the sentence as a highlight; every sentence says it is descriptive.
+  const FEW_LOG2 = 0.3, FEW_PCT = 5, FEW_MIN_CELLS = 20;
+  function fewSummary(rows) {
+    const n = rows.length, tag = n === 1 ? "1 patient, descriptive" : `${n} patients, median, descriptive`;
+    const one = (k) => { const v = vals(rows, k); return v.length ? median(v) : null; };
+    const word = (v) => (v <= -FEW_LOG2 ? "fewer than chance" : v >= FEW_LOG2 ? "more than chance" : "about chance");
+    const keys = [...new Set(rows.flatMap((r) => Object.keys(r)))], out = [];
+    const prox = (key, what, ctrl, lead = "") => {
+      const v = one(key); if (v === null) return;
+      const W = lead ? what : what[0].toUpperCase() + what.slice(1);
+      let text = `${lead}${W}: ${sgn(v)} log2, ${word(v)} (${tag}).`;
+      const c = ctrl ? one(ctrl) : null;
+      if (c !== null && Math.abs(v) >= FEW_LOG2) text += word(c) === word(v) ? ` B cells too (${sgn(c)}), so not specific to T cells.` : ` B cells ${sgn(c)} (${word(c)}).`;
+      out.push({ key, status: v <= -FEW_LOG2 ? "down" : v >= FEW_LOG2 ? "up" : "none", text });
+    };
+    const subs = (src, partner, lead) => {
+      const parts = SUBS.map((s) => [s, one(`nest_${s}_near_${src}_log2`)]).filter(([, v]) => v !== null);
+      if (parts.length) out.push({ key: `nest_sub_${src}`, status: "info", text: `${lead}subsets near ${partner}: ${parts.map(([s, v]) => `${s} ${sgn(v)}`).join(", ")} log2 (${tag}).` });
+    };
+    // markers: [label, value, cells or null]; names the ones beyond ±FEW_PCT
+    const markers = (key, subject, items, bleedV, single) => {
+      items = items.filter(([, v]) => v !== null && Number.isFinite(v));
+      if (!items.length) return;
+      const cells = items.map(([, , c]) => c).filter((c) => c !== null), nc = cells.length ? Math.max(...cells) : null;
+      const S = subject[0].toUpperCase() + subject.slice(1), cnt = nc !== null ? `${nc.toLocaleString("en-US")} cells, ` : "";
+      if (nc !== null && nc < FEW_MIN_CELLS) { out.push({ key, status: "info", text: `${S}: only ${nc} cell${nc === 1 ? "" : "s"}, too few to compare.` }); return; }
+      const big = items.filter(([, v]) => Math.abs(v) >= FEW_PCT), rest = items.length - big.length;
+      const named = big.map(([lab, v]) => `${lab} ${v < 0 ? "lower" : "higher"} (${sgn(v, 1)} pct-pts)`);
+      const tail = !big.length ? `all ${items.length} readouts within ±${FEW_PCT} pct-pts` : rest ? `${rest} other${rest === 1 ? "" : "s"} within ±${FEW_PCT}` : "";
+      const caution = bleedV !== null && bleedV > BLEED_HIGH ? ` Caution: ${single} signal bleeds into the neighbouring cell (+${bleedV.toFixed(0)} pct-pts), so treat as unreliable.` : "";
+      out.push({ key, status: big.length ? "change" : "none", text: `${S}: ${[...named, ...(tail ? [tail] : [])].join("; ")} (${cnt}${tag}).${caution}` });
+    };
+    const viaPool = (base) => { const p = pooled(rows, base); return p ? [p.diff, p.n_near] : [one(base + "_diff"), null]; };
+    const listFor = (prefix, names) => keys.filter((k) => k.startsWith(prefix) && k.endsWith("_diff") && !k.includes("bleed") && !/_(CD8|CD4|Treg)_/.test(k.slice(prefix.length - 1)))
+      .map((k) => { const nm = k.slice(prefix.length, -5), [v, c] = viaPool(k.slice(0, -5)); return [names[nm] || nm, v, c]; });
+    const bleedOf = (base) => { const p = pooled(rows, base); return p ? p.diff : one(base + "_diff"); };
+
+    // Project 1, question 1: do T cells keep away from neutrophils? (B cells as control)
+    prox("T_near_neut_log2", "T cells near neutrophils", "B_near_neut_log2");
+    prox("nest_T_near_neut_log2", "T cells near neutrophils", "nest_B_near_neut_log2", "Inside tumor nests, ");
+    subs("neut", "neutrophils", "Inside tumor nests, T-cell ");
+    // question 2: do T cells gather near macrophages?
+    prox("T_near_mac_log2", "T cells near macrophages");
+    prox("nest_T_near_mac_log2", "T cells near macrophages", null, "Inside tumor nests, ");
+    subs("mac", "macrophages", "Inside tumor nests, T-cell ");
+    // question 3: are T cells touching neutrophils / macrophages different (dying, exhausted, less active)?
+    for (const [src, partner, single] of [["neut", "neutrophils", "neutrophil"], ["mac", "macrophages", "macrophage"]]) {
+      markers(`${src}Touch`, `T cells touching ${partner}`, listFor(`${src}Touch_`, STATE), bleedOf(`${src}Touch_bleed_${src}`), single);
+      markers(`nest_${src}Touch`, `inside tumor nests, T cells touching ${partner}`, listFor(`nest_${src}Touch_`, STATE), bleedOf(`nest_${src}Touch_bleed_${src}`), single);
+    }
+    if (!keys.some((k) => /Touch_apoptosis_diff$/.test(k))) out.push({ key: "death", status: "info", text: "T-cell death near neutrophils: no cell-death readout on this panel." });
+    // question 4: do macrophages touching T cells look suppressive?
+    markers("TmacTouch", "macrophages touching T cells", listFor("TmacTouch_", MAC_STATE), null, "");
+    markers("nest_TmacTouch", "inside tumor nests, macrophages touching T cells", listFor("nest_TmacTouch_", MAC_STATE), null, "");
+    // where the cells are
+    const t = one("comp_nest_pct_T");
+    if (t !== null) {
+      const parts = [`${pctText(t)} T cells`], nu = one("comp_nest_pct_neut"), ma = one("comp_nest_pct_mac"), mT = one("comp_margin_pct_T");
+      if (nu !== null) parts.push(`${pctText(nu)} neutrophils`); if (ma !== null) parts.push(`${pctText(ma)} macrophages`);
+      const nn = one("comp_nest_cells"), size = nn !== null ? ` (${Math.round(nn).toLocaleString("en-US")} cells)` : "";
+      out.push({ key: "compNest", status: "info", text: nn !== null && nn < 200 ? `Tumor nest is tiny${size}, so nest results are unreliable (${tag}).` : `Tumor nest${size}: ${parts.join(", ")}${mT !== null ? `; T cells ${pctText(mT)} at the margin` : ""} (${tag}).` });
+    } else if (!keys.some((k) => /^(comp_|nest_)/.test(k))) out.push({ key: "compartments", status: "info", text: "No tumor nest found in this section, so nest results are not available." });
+    return out;
+  }
+
   // opts.loaded: the dataset came from the user's own file (explains why compartment results can be missing)
   function summarize(rows, opts = {}) {
     if (!rows || !rows.length) return [];
+    if (rows.length < MIN_N) return fewSummary(rows);
     const out = [
       proximity(rows, "T_near_neut_log2", "T cells near neutrophils", "B_near_neut_log2"),
       proximity(rows, "T_near_mac_log2", "T cells near macrophages"),
