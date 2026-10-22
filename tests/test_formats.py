@@ -30,8 +30,11 @@ def _js(cfg, files, tmp):
     return pd.DataFrame(json.loads(out.read_text())["rows"])
 
 
-def _python_reference(tmp):
-    m = dict(MAN, path=str(FIX), dataset="T", _manifest_path="x")
+def _python_reference(tmp, subsets=True):
+    m = {k: v for k, v in MAN.items() if k != "mac_states"}  # dye-numbered exports carry no macrophage-state columns
+    m.update(path=str(FIX), dataset="T", _manifest_path="x")
+    if not subsets:  # dye-numbered flags can't name CD8 / CD4 / Treg, so the reference reads every T cell as plain T
+        m["roles"] = {k: v.split(":")[0] for k, v in MAN["roles"].items()}
     return compute(load_cells(m), m)
 
 
@@ -48,7 +51,7 @@ def src():
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_halo_style_export(tmp_path, src):
-    roles = MAN["roles"]
+    roles = {k: v.split(":")[0] for k, v in MAN["roles"].items()}  # dye flags carry no T subset
     files = []
     for field, g in src.groupby(C["field"]):
         pat = g[C["patient"]].iloc[0]
@@ -71,7 +74,7 @@ def test_halo_style_export(tmp_path, src):
            "phenotype_rules": [{"role": r, "positive": [f"{d} Positive"]} for r, d in ROLE_DYE.items()],
            "states": STATE_COL, "bleed": BLEED_COL}
     js = _js(cfg, files, tmp_path)
-    py = _python_reference(tmp_path)
+    py = _python_reference(tmp_path, subsets=False)
     # field names differ (file names vs CODEX field ids) but each field maps 1:1, so per-patient results must match
     _same(py, js)
 

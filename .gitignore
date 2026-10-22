@@ -26,6 +26,9 @@
 /src/bio/proximity.py
 /src/bio/qc.py
 /src/bio/cosmx.py
+/src/bio/project2.py
+/src/bio/project1_neut.py
+/tests/test_rna_sections.py
 /web/dist/
 /kit_manifests/*.draft.yaml
 __pycache__/

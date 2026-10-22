@@ -1,0 +1,18 @@
+dataset: MARTEAU_XENIUM_normal
+modality: rna   # reviewed 2026-10-22 (cloud): cluster-level labels from the 10x graph clusters (bio.kit xenium, revision 9 rules)
+path: data/marteau_crc/kit/MARTEAU_XENIUM.h5ad
+filters: {tissue: normal}   # section names end in _c (tumor core), _m (invasive margin), _n (adjacent normal); one dataset per tissue
+columns: {patient: patient, field: patient, x: "obsm:spatial:0", y: "obsm:spatial:1", type: annotation}   # obs "patient" = the section name, e.g. run2_crc_d_c
+patient_rule: {mode: regex, regex: "crc_([a-z]+)_"}   # patient = the sample letter: run1_crc_d and run2_crc_d are the same patient re-profiled (letters a-o = the paper's 15 patients; to confirm against the paper's sample table)
+pixel_size_um: 1.0   # Xenium centroids are in µm
+identity_genes: [CD3D, CD3E, CD3G, CD2, CD247]   # CD3G is not in this 380-gene panel; absent genes are ignored
+roles: {T: T, CD8T: 'T:CD8', CD4T: 'T:CD4', Treg: 'T:Treg', Neutrophil: neut, Macrophage: mac, B: B, Plasma: B,
+        Fibroblast: stroma, SMC: stroma, Epithelial: tumor,
+        Endothelial: other, Monocyte: other, DC: other, Mast: other, NK: other, Ambiguous: other, LowCount: other, Unclustered: other}
+states: {prolif: [MKI67, TOP2A, CDK1, PCNA, MCM2, TYMS], PD1: [PDCD1], GZMB: [GZMB], LAG3: [LAG3], ICOS: [ICOS]}
+bleed:
+  neut: [CXCR1, CXCR2, S100A9, G0S2]   # the markers this panel labels neutrophils with (no CSF3R, FCGR3B, FPR1 in the 380-gene panel)
+  mac: [CD68, CD163, C1QA, C1QB, C1QC, MRC1, APOE]
+  stroma: [DCN, LUM, PDGFRA, ACTA2]   # stroma = fibroblasts (DCN, LUM, PDGFRA) and smooth muscle (ACTA2); the collagens are not in this panel
+mac_identity_genes: [CD68, CD14, CSF1R, C1QA, C1QB, C1QC]
+mac_states: {PDL1: [CD274], IDO1: [IDO1], M2: [CD163, MRC1, MSR1]}

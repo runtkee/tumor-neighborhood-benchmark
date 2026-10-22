@@ -6,9 +6,9 @@ pixel_size_um: 1.0   # IMMUcan methods (Eling et al., bioRxiv 10.1101/2024.12.16
 roles:
   Tumor: tumor
   Mural: stroma
-  CD8: T
-  CD4: T
-  Treg: T
+  CD8: 'T:CD8'
+  CD4: 'T:CD4'
+  Treg: 'T:Treg'
   MacCD163: mac
   Neutrophil: neut      # CD15+ MPO+
   plasma: B
@@ -21,3 +21,4 @@ roles:
   undefined: drop
 states: {prolif: Ki67, PD1: PD1, GZMB: GrzB, LAG3: LAG3, ICOS: ICOS, apoptosis: cleavedPARP}
 bleed: {neut: MPO, mac: CD68, stroma: SMA}
+mac_states: {PDL1: PDL1, IDO1: Ido1, CD163: CD163, HLADR: HLADR, M2: CD206}   # names checked against the panel header (recipe v3p macrophage-state tests); IDO1 is spelled Ido1

@@ -7,7 +7,7 @@
     <div class="drop" id="drop">
       <input type="file" id="file" accept=".csv,.tsv,.txt" multiple hidden>
       <button class="primary" id="pick" type="button">Add data</button>
-      <span class="hint">CSV or tab-separated cell table, one or several files. Drop them here.</span>
+      <span class="hint">CSV or tab-separated cell table, or a results table from the Python kit. One or several files. Drop them here.</span>
     </div>
     <ul class="dsets" id="dsets"></ul>
   </aside>
@@ -21,6 +21,6 @@
     <div class="legend" id="legend"></div>
     <div class="claims" id="claims"></div>
     <div id="details"></div>
-    <p class="hint method">Method: 10 µm = touching, 30 µm = nearby. Every proximity test compares against cell labels shuffled within each image, so tissue layout is held fixed. Marker levels are within-image percentiles. A direction counts as consistent when at least 70% of patients (and at least 5) agree. Reference sources: IMMUcan (Zenodo 10.5281/zenodo.12912567, CC BY 4.0), Schürch et al. 2020 CODEX (Mendeley 10.17632/mpjzbtfgfr.1, CC BY 4.0), SPATCH benchmark (Nat Commun 2025, summary statistics only). Research use only; not for diagnosis.</p>
+    <p class="hint method">Method: 10 µm = touching, 30 µm = nearby. Every proximity test compares against cell labels shuffled within each image, so tissue layout is held fixed. Each image is also split into tumor nest (tumor cells are at least half of the cells within 50 µm), margin (within 100 µm of a nest) and far tissue, from cell positions alone; nest tests shuffle labels within each compartment, and T cells are split into CD8, CD4 and regulatory subsets when the labels name them. Marker levels are within-image percentiles. A direction counts as consistent when at least 70% of patients (and at least 5) agree. Reference sources: IMMUcan (Zenodo 10.5281/zenodo.12912567, CC BY 4.0), Schürch et al. 2020 CODEX (Mendeley 10.17632/mpjzbtfgfr.1, CC BY 4.0), SPATCH benchmark (Nat Commun 2025, summary statistics only). Research use only; not for diagnosis.</p>
   </main>
 </div>

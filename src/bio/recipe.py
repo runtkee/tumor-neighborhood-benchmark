@@ -3,6 +3,10 @@
 v1 -> v2: T-state scores per 1000 counts were diluted by neighbor spillover (fibroblast-contact control
 showed the same "effect" as macrophage contact). v2 scores T state as log ratio to T-identity genes.
 
+Label set: v2 was written for the SPATCH labels. The kit (`python -m bio.kit xenium`) also writes Treg and T (subset unknown), which
+count as T cells (T_TYPES); SPATCH has neither label, so SPATCH results are unchanged and the version stays "v2".
+Kit labels the recipe does not use: Endothelial, SMC, Monocyte, DC, Mast, NK, Ambiguous, LowCount.
+
 Input: AnnData with raw counts in .X, obs['annotation'] (cell type), obs['sample'], obsm['spatial'] in µm,
 optional obs['region'] (tissue-region label used as a covariate).
 Output: one row of metrics per sample (see docs/recipe.md).
@@ -20,7 +24,7 @@ TOP_FRAC = 0.10         # activated neutrophils = top 10% activation ratio
 MIN_IDENT = 3           # neutrophil identity counts needed to trust its ratio
 MIN_CELLS = 300         # minimum cells of each type to run a test
 N_SHUFFLE = 50
-T_TYPES = ["CD4T", "CD8T", "Tprolif"]
+T_TYPES = ["CD4T", "CD8T", "Treg", "T", "Tprolif"]   # "T" = kit label, subset unknown
 NEUT_ACT = ["AQP9", "BCL2A1", "NCF2", "OSM", "TREM1"]          # Veglia 2021, neutrophil-enriched
 NEUT_IDENT = ["CSF3R", "FPR1", "FCGR3B", "CXCR1", "CXCR2"]
 T_IDENT = ["CD3D", "CD3E", "CD3G", "CD2", "CD247"]

@@ -8,22 +8,22 @@ columns:
   y: 'Y:Y'  # reviewed
   type: 'ClusterName'  # reviewed
 pixel_size_um: 0.377  # TCIA dataset page: Keyence BZ-X710, 20x/0.75, 377.44 nm/pixel. Was 0.432 (an uncorrected estimate) until 2026-10-20.
-roles:  # raw label -> T | neut | mac | B | stroma | tumor | other | drop
+roles:  # raw label -> T | T:CD8 | T:CD4 | T:Treg | neut | mac | B | stroma | tumor | other | drop  (T subsets added for recipe v3p; plain T = subset unknown)
   'tumor cells': tumor  # reviewed
   'CD68+CD163+ macrophages': mac  # reviewed
   'smooth muscle': stroma  # reviewed
   'granulocytes': neut  # reviewed
   'stroma': stroma  # reviewed
-  'CD8+ T cells': T  # reviewed
-  'CD4+ T cells CD45RO+': T  # reviewed
+  'CD8+ T cells': 'T:CD8'  # reviewed
+  'CD4+ T cells CD45RO+': 'T:CD4'  # reviewed
   'B cells': B  # reviewed
   'vasculature': other  # reviewed
   'plasma cells': B  # reviewed
   'dirt': drop  # reviewed
   'undefined': drop  # reviewed
   'immune cells': other  # reviewed
-  'Tregs': T  # reviewed
-  'CD4+ T cells': T  # reviewed
+  'Tregs': 'T:Treg'  # reviewed
+  'CD4+ T cells': 'T:CD4'  # reviewed
   'immune cells / vasculature': other  # reviewed
   'CD68+ macrophages': mac  # reviewed
   'adipocytes': other  # reviewed
@@ -36,7 +36,7 @@ roles:  # raw label -> T | neut | mac | B | stroma | tumor | other | drop
   'NK cells': other  # reviewed
   'CD3+ T cells': T  # reviewed
   'CD68+ macrophages GzmB+': mac  # reviewed
-  'CD4+ T cells GATA3+': T  # reviewed
+  'CD4+ T cells GATA3+': 'T:CD4'  # reviewed
   'CD163+ macrophages': mac  # reviewed
 states:  # canonical T-state -> column
   prolif: 'Ki67 - proliferation:Cyc_5_ch_4'  # reviewed
@@ -49,5 +49,10 @@ bleed:  # role -> that role's own marker column (used to measure signal bleed in
   neut: 'CD15 - granulocytes:Cyc_14_ch_2'  # reviewed
   mac: 'CD68 - macrophages:Cyc_18_ch_4'  # reviewed
   stroma: 'aSMA - smooth muscle:Cyc_11_ch_2'  # reviewed: vimentin failed the sanity check (T cells express it)
+mac_states:  # macrophage-state columns for TmacTouch_* (recipe v3p); names checked against the raw file header
+  PDL1: 'PD-L1 - checkpoint:Cyc_5_ch_3'  # reviewed
+  IDO1: 'IDO-1 - metabolism:Cyc_9_ch_4'  # reviewed
+  CD163: 'CD163 - macrophages:Cyc_17_ch_3'  # reviewed
+  HLADR: 'HLA-DR - MHC-II:Cyc_5_ch_2'  # reviewed
 # extra_roles: {pmn_mdsc: neut}   # private-only roles and their nearest public proxy
 # extra_states: [lmp]               # private-only T states

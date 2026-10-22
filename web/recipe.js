@@ -1,13 +1,21 @@
-// Browser/Node port of the locked protein recipe (src/bio/recipe_protein.py, v2p.1) and the kit's import + checks.
+// Browser/Node port of the locked protein recipe (src/bio/recipe_protein.py, v3p.1; spec docs/recipe-v3.md) and the kit's import + checks.
 // Must stay numerically identical to the Python version: tests/test_parity.py runs both on the same data.
 (function (root) {
   "use strict";
-  const VERSION = "v2p.1";
-  const NEAR_UM = 10, ZONE_UM = 30, N_SHUFFLE = 20, MIN_PER_PATIENT = 20, MIN_ROLE = 300;
+  const VERSION = "v3p.1";
+  const NEAR_UM = 10, ZONE_UM = 30, N_SHUFFLE = 20, MIN_PER_PATIENT = 20, MIN_ROLE = 300, MIN_SPACING = 4;
   const ROLES = ["T", "neut", "mac", "B", "stroma", "tumor", "other"];
   const STATES = ["prolif", "PD1", "GZMB", "LAG3", "ICOS", "apoptosis"];
   const PAIRS = [["T", "neut"], ["B", "neut"], ["T", "mac"]];
   const SOURCES = ["neut", "mac", "stroma"];
+  // recipe v3p (src/bio/recipe_protein.py, src/bio/compartment.py)
+  const SUBS = ["CD8", "CD4", "Treg"];                 // T-cell subsets; cells.sub holds 0 (unknown) or 1 + index in SUBS
+  const IMMUNE = ["T", "neut", "mac", "B"];            // denominator of the immune-share columns
+  const COMP_NAMES = ["nest", "margin", "far", "unknown"];   // cells.comp / compartment codes 0..3
+  const GRAD_EDGES = [0, 5, 10, 20, 30, 50, 100];      // µm; bin i = [edge i, edge i+1), last bin = 100+
+  const GRAD_LABELS = ["0-5", "5-10", "10-20", "20-30", "30-50", "50-100", "100+"];
+  const GRAD_SOURCES = ["neut", "mac"];
+  const F50_RADIUS_UM = 50, NEST_MIN_FRAC = 0.5, MARGIN_RADIUS_UM = 100, MIN_NEST_FRAC = 0.2, MIN_NEST_T = 300;
 
   // ---- shared PRNG (bio/prng.py) ----
   function fnv1a(s) {
@@ -121,6 +129,10 @@
     let a = new Float64Array(4096), n = 0;
     return { push(v) { if (n === a.length) { const b = new Float64Array(a.length * 2); b.set(a); a = b; } a[n++] = v; }, done() { return a.slice(0, n); } };
   }
+  function U8() {
+    let a = new Uint8Array(4096), n = 0;
+    return { push(v) { if (n === a.length) { const b = new Uint8Array(a.length * 2); b.set(a); a = b; } a[n++] = v; }, done() { return a.slice(0, n); } };
+  }
   function interner() { const m = new Map(); return (s) => { let v = m.get(s); if (v === undefined) { m.set(s, s); v = s; } return v; }; }
   const DUP_SAMPLE = 300000;
 
@@ -132,8 +144,10 @@
     const c = m.columns, px = Number(m.pixel_size_um);
     const rules = m.phenotype_rules ? m.phenotype_rules.filter((ru) => (ru.positive || []).length) : null;  // a rule needs a positive marker
     const stateCols = Object.entries(m.states || {}), bleedCols = Object.entries(m.bleed || {}).map(([k, v]) => ["bleed_" + k, v]);
-    const valCols = stateCols.concat(bleedCols);
-    const P = [], Fd = [], RT = [], TY = [], X = F64(), Y = F64(), V = {};
+    const macCols = Object.entries(m.mac_states || {}).map(([k, v]) => ["macstate_" + k, v]);   // v3p: macrophage-state readouts
+    const valCols = stateCols.concat(bleedCols, macCols);
+    const compLab = m.compartments || {};   // explicit annotation (v3p): column value -> nest | margin | far
+    const P = [], Fd = [], RT = [], TY = [], X = F64(), Y = F64(), V = {}, SB = U8(), CP = c.compartment ? U8() : null;
     for (const [k] of valCols) V[k] = F64();
     const I = interner();
     const diag = { files: [], rows: 0, short: 0, coordBad: 0, idEmpty: { patient: 0, field: 0 }, dropped: 0, dup: 0, dupChecked: 0,
@@ -157,6 +171,7 @@
       cur.len = r.length;
       cur.ip = col(c.patient); cur.if = col(c.field); cur.cx = ax(c.x); cur.cy = ax(c.y);
       cur.extra = valCols.map(([k, name]) => [k, col(name)]);
+      cur.ic = c.compartment ? col(c.compartment) : null;
       cur.rules = rules ? rules.map((ru) => ({ role: ru.role, pos: (ru.positive || []).map((n) => [n, col(n)]), neg: (ru.negative || []).map((n) => [n, col(n)]) })) : null;
       cur.it = rules ? null : (c.type ? col(c.type) : null);
       cur.info.missing = [...new Set(missing)];
@@ -188,6 +203,9 @@
         raw = cur.it === null ? "(no cell type column)" : g(cur.it);
         role = Object.prototype.hasOwnProperty.call(m.roles || {}, raw) ? m.roles[raw] : "unmapped";
       }
+      let sub = 0;   // a role value may carry a T subset: "T:CD8" -> type T, sub CD8 (plain "T" = subset unknown)
+      const colon = role.indexOf(":");
+      if (colon > 0) { if (role.startsWith("T:")) sub = SUBS.indexOf(role.slice(2)) + 1; role = role.slice(0, colon); }
       if (role === "drop") { diag.dropped++; return; }
       const dc = cur.dc;
       const v = (ix) => (ix.length === 2 ? (num(g(ix[0]), dc) + num(g(ix[1]), dc)) / 2 : num(g(ix[0]), dc));
@@ -201,12 +219,14 @@
       if (pat === "" || pat === undefined) diag.idEmpty.patient++;
       if (fld === "" || fld === undefined) diag.idEmpty.field++;
       if (diag.dupChecked < DUP_SAMPLE) { diag.dupChecked++; const key = pat + "\u0000" + fld + "\u0000" + x + "\u0000" + y; if (seen.has(key)) diag.dup++; else seen.add(key); }
-      P.push(I(pat)); Fd.push(I(fld)); RT.push(I(raw)); TY.push(I(role)); X.push(x); Y.push(y);
+      P.push(I(pat)); Fd.push(I(fld)); RT.push(I(raw)); TY.push(I(role)); X.push(x); Y.push(y); SB.push(sub);
+      if (CP) { const lv = g(cur.ic), lab = Object.prototype.hasOwnProperty.call(compLab, lv) ? compLab[lv] : "unknown", ci = COMP_NAMES.indexOf(lab); CP.push(ci < 0 ? 3 : ci); }
       for (const [k, i] of cur.extra) { const rv = g(i), val = num(rv, dc); V[k].push(val); stat(diag.colStats[k], rv, val); }
     }
     function finish() {
       seen.clear();
-      let cells = { patient: P, field: Fd, x: X.done(), y: Y.done(), raw_type: RT, type: TY, cols: {}, diag };
+      let cells = { patient: P, field: Fd, x: X.done(), y: Y.done(), raw_type: RT, type: TY, sub: SB.done(), cols: {}, diag };
+      if (CP) cells.comp = CP.done();
       for (const [k] of valCols) cells.cols[k] = V[k].done();
       const minF = Number(m.min_cells_per_field || 0);
       diag.droppedFields = 0;
@@ -220,6 +240,8 @@
           const fa = (a) => a.filter((_, i) => keep[i]);
           cells = { ...cells, patient: fa(P), field: fa(Fd), raw_type: fa(RT), type: fa(TY), x: cells.x.filter((_, i) => keep[i]), y: cells.y.filter((_, i) => keep[i]) };
           for (const [k] of valCols) cells.cols[k] = cells.cols[k].filter((_, i) => keep[i]);
+          cells.sub = cells.sub.filter((_, i) => keep[i]);
+          if (cells.comp) cells.comp = cells.comp.filter((_, i) => keep[i]);
         }
       }
       cells.n = cells.type.length;
@@ -321,6 +343,295 @@
   }
   const mean = (a) => { let s = 0; for (const v of a) s += v; return s / a.length; };
 
+  // ---- recipe v3p: dense grid, compartments, composition, nest proximity, gradients (src/bio/recipe_protein.py `_v3p`) ----
+  // Typed-array grid over one image (counting sort, no Maps). Distances are exact; bins only choose candidates.
+  function makeDense(x0, y0, w, h, size0, cap) {
+    let size = size0, nx = Math.floor(w / size) + 1, ny = Math.floor(h / size) + 1;
+    while (nx * ny > 4000000) { size *= 2; nx = Math.floor(w / size) + 1; ny = Math.floor(h / size) + 1; }
+    const nb = nx * ny, start = new Int32Array(nb + 1);
+    const gx = new Float64Array(cap), gy = new Float64Array(cap), gf = new Uint8Array(cap), bid = new Int32Array(cap);
+    const bin = (v, v0, nn) => { const b = Math.floor((v - v0) / size); return b < 0 ? 0 : b >= nn ? nn - 1 : b; };
+    // points px/py at the first k entries of `list` (local indices); optional flags[i] kept per point (gf)
+    function build(px, py, list, k, flags) {
+      start.fill(0);
+      for (let p = 0; p < k; p++) { const i = list[p], b = bin(py[i], y0, ny) * nx + bin(px[i], x0, nx); bid[p] = b; start[b]++; }
+      let s = 0; for (let b = 0; b < nb; b++) { s += start[b]; start[b] = s; } start[nb] = s;
+      for (let p = k - 1; p >= 0; p--) { const i = list[p], pos = --start[bid[p]]; gx[pos] = px[i]; gy[pos] = py[i]; if (flags) gf[pos] = flags[i]; }
+    }
+    // exact distance to the nearest point if it is below maxR (a hair more, so callers can compare with <= maxR), else Infinity
+    function nearest(x, y, maxR) {
+      const lim = maxR * 1.000001, lim2 = lim * lim, rmax = Math.ceil(lim / size);
+      let best = lim2; const cx = bin(x, x0, nx), cy = bin(y, y0, ny);
+      const rall = Math.max(cx, nx - 1 - cx, cy, ny - 1 - cy);
+      for (let r = 0; r <= rmax && r <= rall; r++) {
+        if (r > 1) { const lb = (r - 1) * size - 1e-7; if (lb > 0 && lb * lb >= best) break; }
+        const ya = cy - r, yb = cy + r, xa = cx - r, xb = cx + r;
+        const bx0 = xa < 0 ? 0 : xa, bx1 = xb >= nx ? nx - 1 : xb, by0 = ya < 0 ? 0 : ya, by1 = yb >= ny ? ny - 1 : yb;
+        for (let by = by0; by <= by1; by++) {
+          const row = by * nx;
+          if (by === ya || by === yb) {
+            for (let p = start[row + bx0], e = start[row + bx1 + 1]; p < e; p++) { const dx = x - gx[p], dy = y - gy[p], d2 = dx * dx + dy * dy; if (d2 < best) best = d2; }
+          } else {
+            if (xa >= 0) for (let p = start[row + xa], e = start[row + xa + 1]; p < e; p++) { const dx = x - gx[p], dy = y - gy[p], d2 = dx * dx + dy * dy; if (d2 < best) best = d2; }
+            if (xb < nx) for (let p = start[row + xb], e = start[row + xb + 1]; p < e; p++) { const dx = x - gx[p], dy = y - gy[p], d2 = dx * dx + dy * dy; if (d2 < best) best = d2; }
+          }
+        }
+      }
+      return best < lim2 ? Math.sqrt(best) : Infinity;
+    }
+    // cells and tumor cells (flags) within r µm of (x, y), distance <= r, the point itself included when it was built in
+    function within(x, y, r, out) {
+      const rr = Math.ceil(r / size), cx = bin(x, x0, nx), cy = bin(y, y0, ny), r2 = r * r;
+      const bx0 = Math.max(cx - rr, 0), bx1 = Math.min(cx + rr, nx - 1), by0 = Math.max(cy - rr, 0), by1 = Math.min(cy + rr, ny - 1);
+      let tot = 0, flg = 0;
+      for (let by = by0; by <= by1; by++) {
+        const row = by * nx;
+        for (let p = start[row + bx0], e = start[row + bx1 + 1]; p < e; p++) { const dx = x - gx[p], dy = y - gy[p]; if (dx * dx + dy * dy <= r2) { tot++; flg += gf[p]; } }
+      }
+      out[0] = tot; out[1] = flg;
+    }
+    return { build, nearest, within, size };
+  }
+  function imageBounds(lx, ly, n) {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (let j = 0; j < n; j++) { const x = lx[j], y = ly[j]; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    return { x0, y0, w: x1 - x0, h: y1 - y0 };
+  }
+
+  // One image (local arrays): nest = tumor cells are >= half of the cells within 50 µm (self included, distance <= 50);
+  // margin = not nest, a nest cell within 100 µm (distance <= 100); far = the rest. Writes codes 0/1/2 to out.
+  function assignCompartments(lx, ly, tum, n, out, scratch) {
+    const b = imageBounds(lx, ly, n), all = scratch.all, cnt = [0, 0];
+    for (let j = 0; j < n; j++) all[j] = j;
+    const G = makeDense(b.x0, b.y0, b.w, b.h, F50_RADIUS_UM / 2, n);
+    G.build(lx, ly, all, n, tum);
+    let nNest = 0; const nestList = scratch.nestList;
+    for (let j = 0; j < n; j++) {
+      G.within(lx[j], ly[j], F50_RADIUS_UM, cnt);
+      if (cnt[1] / cnt[0] >= NEST_MIN_FRAC) { out[j] = 0; nestList[nNest++] = j; } else out[j] = 2;
+    }
+    if (nNest) {
+      const H = makeDense(b.x0, b.y0, b.w, b.h, F50_RADIUS_UM, n);
+      H.build(lx, ly, nestList, nNest);
+      for (let j = 0; j < n; j++) if (out[j] === 2 && H.nearest(lx[j], ly[j], MARGIN_RADIUS_UM) <= MARGIN_RADIUS_UM) out[j] = 1;
+    }
+  }
+  // compartment code per cell (0 nest, 1 margin, 2 far, 3 unknown = image without tumor cells). An annotation column
+  // (cells.comp, set by the importer) wins over geometry. Cached per cells object, so the scaled copies used for the
+  // pixel-size sensitivity runs are recomputed.
+  const COMP_CACHE = new WeakMap();
+  function compartmentsFor(cells, byImg) {
+    if (cells.comp) return { comp: cells.comp, explicit: true };
+    let r = COMP_CACHE.get(cells); if (r) return r;
+    const N = cells.type.length, comp = new Uint8Array(N).fill(3), by = byImg || groupIndex(imageKeys(cells));
+    let maxN = 0; for (const idx of by.values()) if (idx.length > maxN) maxN = idx.length;
+    const lx = new Float64Array(maxN), ly = new Float64Array(maxN), tum = new Uint8Array(maxN), out = new Uint8Array(maxN);
+    const scratch = { all: new Int32Array(maxN), nestList: new Int32Array(maxN) };
+    for (const idx of by.values()) {
+      const n = idx.length; let nt = 0;
+      for (let j = 0; j < n; j++) { const i = idx[j]; lx[j] = cells.x[i]; ly[j] = cells.y[i]; const t = cells.type[i] === "tumor" ? 1 : 0; tum[j] = t; nt += t; }
+      if (!nt) continue;
+      assignCompartments(lx, ly, tum, n, out, scratch);
+      for (let j = 0; j < n; j++) comp[idx[j]] = out[j];
+    }
+    r = { comp, explicit: false }; COMP_CACHE.set(cells, r); return r;
+  }
+
+  // k distinct pool entries by partial Fisher-Yates (same draws as choose()), written to out[off..]; the pool is restored afterwards
+  function drawInto(rng, pool, n, k, out, off, undo) {
+    for (let i = 0; i < k; i++) { const j = i + Math.floor(rng() * (n - i)); undo[i] = j; const t = pool[i]; pool[i] = pool[j]; pool[j] = t; }
+    for (let i = 0; i < k; i++) out[off + i] = pool[i];
+    for (let i = k - 1; i >= 0; i--) { const j = undo[i], t = pool[i]; pool[i] = pool[j]; pool[j] = t; }
+  }
+  function gradBin(d) { return d < 5 ? 0 : d < 10 ? 1 : d < 20 ? 2 : d < 30 ? 3 : d < 50 ? 4 : d < 100 ? 5 : 6; }
+  const nz = (o, k, init) => (o[k] === undefined ? (o[k] = init) : o[k]);
+
+  // The v3p columns, one object per patient. Mirrors `_v3p` in src/bio/recipe_protein.py line by line.
+  function v3pPass(cells, m, ctx, onProgress) {
+    const { roles, states, bleed, pairs, sources, pct, byPF, byField, patients } = ctx;
+    const N = cells.type.length;
+    const rIdx = new Map(roles.map((r, i) => [r, i]));
+    const tcode = new Uint8Array(N);
+    for (let i = 0; i < N; i++) { const k = rIdx.get(cells.type[i]); tcode[i] = k === undefined ? 255 : k; }
+    const tIdx = rIdx.has("T") ? rIdx.get("T") : -1, macIdx = rIdx.has("mac") ? rIdx.get("mac") : -1, tumIdx = rIdx.has("tumor") ? rIdx.get("tumor") : -1;
+    const subArr = cells.sub || new Uint8Array(N);
+    const subHas = [false, false, false, false];
+    if (tIdx >= 0) for (let i = 0; i < N; i++) if (tcode[i] === tIdx && subArr[i] > 0) subHas[subArr[i]] = true;
+    const subs = SUBS.filter((_, k) => subHas[k + 1]);
+    const cc = compartmentsFor(cells, byPF).comp;
+    let haveComp = false, haveNest = false;
+    for (let i = 0; i < N; i++) { const c = cc[i]; if (c !== 3) { haveComp = true; if (c === 0) { haveNest = true; break; } } }
+    const macStates = {};
+    for (const s of Object.keys(m.mac_states || {})) if (usable(cells, "macstate_" + s)) macStates[s] = "macstate_" + s;
+    const hasMacTouch = Object.keys(macStates).length > 0 && macIdx >= 0 && tIdx >= 0;
+    if (hasMacTouch) for (const col of Object.values(macStates)) pct[col] = pctRankByField(cells.cols[col], byField);
+    const compRoles = IMMUNE.filter((r) => rIdx.has(r));
+    const names = ["T"].concat(subs, ["neut", "mac", "B"]).filter((x) => subs.includes(x) || compRoles.includes(x));
+    const gradPairs = GRAD_SOURCES.filter((s) => rIdx.has(s)).map((s) => ["T", s]);
+    const isGrad = (t, s) => gradPairs.some((p) => p[0] === t && p[1] === s);
+    const nestPairs = pairs.slice();
+    for (const p of gradPairs) if (!nestPairs.some((q) => q[0] === p[0] && q[1] === p[1])) nestPairs.push(p);
+    for (const s of subs) for (const src of GRAD_SOURCES) if (rIdx.has(src)) nestPairs.push([s, src]);
+    // slot layout of the per-image composition counters: compartment * 8 + [cells, T, neut, mac, B, CD8, CD4, Treg]
+    const slotOfRole = new Int8Array(roles.length).fill(-1);
+    IMMUNE.forEach((r, k) => { if (rIdx.has(r)) slotOfRole[rIdx.get(r)] = 1 + k; });
+    const acc = new Map(patients.map((p) => [p, { a: {}, counts: new Float64Array(24) }]));
+    let maxN = 0; for (const ix of byPF.values()) if (ix.length > maxN) maxN = ix.length;
+    const lx = new Float64Array(maxN), ly = new Float64Array(maxN), tc = new Uint8Array(maxN), sb = new Uint8Array(maxN), cm = new Uint8Array(maxN);
+    const undo = new Int32Array(maxN), srcBuf = new Int32Array(maxN), all = new Int32Array(maxN);
+    const pools = [0, 1, 2, 3].map(() => new Int32Array(maxN));
+    const tList = new Int32Array(maxN), tx = new Float64Array(maxN), ty = new Float64Array(maxN), tpos = new Int32Array(maxN);
+    const dist = new Float64Array(maxN), bi = new Uint8Array(maxN);
+    const roleList = roles.map(() => new Int32Array(maxN));
+    const roleCnt = new Int32Array(roles.length), roleComp = new Int32Array(roles.length * 4);
+    // running sums with Neumaier compensation (c), so the pooled sums match Python's math.fsum whatever the order of the images
+    const add = (a, key, v, n) => { const o = a[key] || (a[key] = { s: 0, c: 0, n: 0 }); o.s += v; o.n += n; };
+    const push = (a, key, ixv, col, i) => {
+      const o = a[key] || (a[key] = { s: 0, c: 0, n: 0 }), v = pct[col][ixv[i]], t = o.s + v;
+      o.c += Math.abs(o.s) >= Math.abs(v) ? (o.s - t) + v : (v - t) + o.s; o.s = t; o.n++;
+    };
+    let done = 0;
+    for (const [key, ix] of byPF) {
+      if (onProgress) onProgress(done++ / byPF.size);
+      const [pat, field] = key.split("\u0000");
+      const { a, counts } = acc.get(pat), n = ix.length;
+      roleCnt.fill(0); roleComp.fill(0);
+      const lc = new Int32Array(24);
+      for (let j = 0; j < n; j++) {
+        const i = ix[j], r = tcode[i], c = cc[i];
+        lx[j] = cells.x[i]; ly[j] = cells.y[i]; tc[j] = r; sb[j] = subArr[i]; cm[j] = c; all[j] = j;
+        if (r !== 255) { roleList[r][roleCnt[r]++] = j; roleComp[r * 4 + c]++; }
+        if (haveComp && c < 3) {
+          const base = c * 8; lc[base]++;
+          if (r !== 255) { const sl = slotOfRole[r]; if (sl > 0) lc[base + sl]++; if (r === tIdx && sb[j] > 0 && subHas[sb[j]]) lc[base + 4 + sb[j]]++; }
+        }
+      }
+      if (haveComp) for (let q = 0; q < 24; q++) counts[q] += lc[q];
+      let nestN = 0; for (let j = 0; j < n; j++) if (cm[j] === 0) nestN++;
+      const b = imageBounds(lx, ly, n);
+      const G = makeDense(b.x0, b.y0, b.w, b.h, ZONE_UM, n);
+      const isTgt = (tgt) => { const si = SUBS.indexOf(tgt); return si >= 0 ? (j) => tc[j] === tIdx && sb[j] === si + 1 : (() => { const ri = rIdx.get(tgt); return (j) => tc[j] === ri; })(); };
+      if (haveComp && nestN > 0 && tIdx >= 0) {
+        // 2 + 3. nest-restricted proximity and distance gradient, null = sources shuffled within each compartment
+        for (const [tgt, src] of nestPairs) {
+          if (!(SUBS.includes(tgt) ? subs.includes(tgt) : rIdx.has(tgt)) || !rIdx.has(src)) continue;
+          const sIdx = rIdx.get(src), isT = isTgt(tgt);
+          let nT = 0; for (let j = 0; j < n; j++) if (cm[j] === 0 && isT(j)) { tList[nT] = j; tx[nT] = lx[j]; ty[nT] = ly[j]; nT++; }
+          if (nT === 0 || roleCnt[sIdx] === 0) continue;
+          const grad = isGrad(tgt, src), maxR = grad ? 100 : ZONE_UM;
+          G.build(lx, ly, roleList[sIdx], roleCnt[sIdx]);
+          let real = 0; const realBins = new Float64Array(7);
+          for (let t = 0; t < nT; t++) { const d = G.nearest(tx[t], ty[t], maxR); dist[t] = d; if (d < ZONE_UM) real++; if (grad) realBins[gradBin(d)]++; }
+          const plen = [0, 0, 0, 0];
+          for (let j = 0; j < n; j++) if (!isT(j) && tc[j] !== tumIdx) { const c = cm[j]; pools[c][plen[c]++] = j; }   // v3p.1: tumor cells are never source labels
+          const rng = mulberry32(fnv1a(`${pat}|${field}|${tgt}|${src}|nest`));
+          let sumNull = 0; const nullBins = new Float64Array(7);
+          for (let s = 0; s < N_SHUFFLE; s++) {
+            let off = 0;
+            for (let c = 0; c < 4; c++) { const k = Math.min(roleComp[sIdx * 4 + c], plen[c]); if (k > 0) { drawInto(rng, pools[c], plen[c], k, srcBuf, off, undo); off += k; } }
+            G.build(lx, ly, srcBuf, off);
+            let cnt = 0;
+            for (let t = 0; t < nT; t++) { const d = G.nearest(tx[t], ty[t], maxR); if (d < ZONE_UM) cnt++; if (grad) nullBins[gradBin(d)]++; }
+            sumNull += cnt;
+          }
+          const k = `nest_${tgt}_near_${src}`;
+          a[k + "_real"] = (a[k + "_real"] || 0) + real;
+          a[k + "_null"] = (a[k + "_null"] || 0) + sumNull / N_SHUFFLE;
+          if (grad) {   // same shuffles as above; state means from the real distances only
+            const sums = GRAD_LABELS.map(() => states.map(() => ({ s: 0, n: 0 })));
+            for (let t = 0; t < nT; t++) {
+              const bb = gradBin(dist[t]), gi = ix[tList[t]];
+              states.forEach((col, ci) => { const o = sums[bb][ci]; o.s += pct[col][gi]; o.n++; });
+            }
+            GRAD_LABELS.forEach((lab, bb) => {
+              const gk = `grad_${src}_${lab}`;
+              a[gk + "_real"] = (a[gk + "_real"] || 0) + realBins[bb];
+              a[gk + "_null"] = (a[gk + "_null"] || 0) + nullBins[bb] / N_SHUFFLE;
+              states.forEach((col, ci) => add(a, `${gk}_${col}_mean`, sums[bb][ci].s, sums[bb][ci].n));
+            });
+          }
+        }
+        // 4. contact tests on nest T cells (and per subset)
+        let nT = 0; for (let j = 0; j < n; j++) if (cm[j] === 0 && tc[j] === tIdx) { tList[nT] = j; tx[nT] = lx[j]; ty[nT] = ly[j]; nT++; }
+        for (const src of sources) {
+          if (!rIdx.has(src) || nT === 0 || roleCnt[rIdx.get(src)] === 0) continue;
+          const sIdx = rIdx.get(src);
+          G.build(lx, ly, roleList[sIdx], roleCnt[sIdx]);
+          const cols = states.concat(src in bleed ? [bleed[src]] : []);
+          for (const col of cols) { add(a, `nest_${src}Touch_${col}_near`, 0, 0); add(a, `nest_${src}Touch_${col}_far`, 0, 0); }
+          for (const s of subs) for (const col of states) { add(a, `nest_${src}Touch_${s}_${col}_near`, 0, 0); add(a, `nest_${src}Touch_${s}_${col}_far`, 0, 0); }
+          for (let t = 0; t < nT; t++) {
+            const d = G.nearest(tx[t], ty[t], ZONE_UM), near = d < NEAR_UM, far = d >= ZONE_UM;
+            if (!near && !far) continue;
+            const gi = ix[tList[t]], suffix = near ? "_near" : "_far", sc = sb[tList[t]];
+            for (const col of cols) push(a, `nest_${src}Touch_${col}${suffix}`, ix, col, tList[t]);
+            if (sc > 0) { const s = SUBS[sc - 1]; if (subs.includes(s)) for (const col of states) push(a, `nest_${src}Touch_${s}_${col}${suffix}`, ix, col, tList[t]); }
+          }
+        }
+      }
+      // 5. macrophage state next to T cells: all macrophages of the image (TmacTouch_*) and nest macrophages only
+      //    (nest_TmacTouch_*, only when the dataset has a nest)
+      if (hasMacTouch && roleCnt[tIdx] > 0 && roleCnt[macIdx] > 0) {
+        const nM = roleCnt[macIdx]; let nMn = 0;
+        for (let q = 0; q < nM; q++) { const j = roleList[macIdx][q]; tList[q] = j; tx[q] = lx[j]; ty[q] = ly[j]; if (cm[j] === 0) nMn++; }
+        const withNest = haveNest && nMn > 0;
+        G.build(lx, ly, roleList[tIdx], roleCnt[tIdx]);
+        for (const name of Object.keys(macStates)) {
+          add(a, `TmacTouch_${name}_near`, 0, 0); add(a, `TmacTouch_${name}_far`, 0, 0);
+          if (withNest) { add(a, `nest_TmacTouch_${name}_near`, 0, 0); add(a, `nest_TmacTouch_${name}_far`, 0, 0); }
+        }
+        for (let t = 0; t < nM; t++) {
+          const d = G.nearest(tx[t], ty[t], ZONE_UM), near = d < NEAR_UM, far = d >= ZONE_UM;
+          if (!near && !far) continue;
+          const arm = near ? "near" : "far", inNest = withNest && cm[tList[t]] === 0;
+          for (const [name, col] of Object.entries(macStates)) {
+            push(a, `TmacTouch_${name}_${arm}`, ix, col, tList[t]);
+            if (inNest) push(a, `nest_TmacTouch_${name}_${arm}`, ix, col, tList[t]);
+          }
+        }
+      }
+    }
+    // ---- one object per patient, columns in the same order as the Python version ----
+    const out = new Map();
+    for (const pat of patients) {
+      const { a, counts } = acc.get(pat), r = {};
+      const val = (o, minN) => (o && o.n >= minN ? o.s / o.n : NaN);
+      const tot = (o) => o.s + (o.c || 0);
+      const logk = (base) => (`${base}_real` in a ? { [`${base}_log2`]: Math.log2((a[`${base}_real`] + 1) / (a[`${base}_null`] + 1)) } : {});
+      const touch = (base) => {
+        const nr = a[`${base}_near`], f = a[`${base}_far`];
+        if (!nr) return {};
+        // v3p.1: n, pooled sums of both arms, diff (the 20-cell rule applies to diff only)
+        return { [`${base}_n`]: nr.n, [`${base}_near_sum`]: tot(nr), [`${base}_far_n`]: f.n, [`${base}_far_sum`]: tot(f),
+          [`${base}_diff`]: nr.n >= MIN_PER_PATIENT && f.n >= MIN_PER_PATIENT ? tot(nr) / nr.n - tot(f) / f.n : NaN };
+      };
+      if (haveComp) {
+        COMP_NAMES.slice(0, 3).forEach((cn, c) => {
+          const base = c * 8, cellsN = counts[base];
+          let imm = 0; IMMUNE.forEach((rr, k) => { if (rIdx.has(rr)) imm += counts[base + 1 + k]; });
+          const cnt = (x) => (SUBS.includes(x) ? counts[base + 5 + SUBS.indexOf(x)] : counts[base + 1 + IMMUNE.indexOf(x)]);
+          r[`comp_${cn}_cells`] = cellsN;
+          for (const x of names) r[`comp_${cn}_pct_${x}`] = cellsN > 0 ? (100 * cnt(x)) / cellsN : NaN;
+          for (const x of names) r[`comp_${cn}_immshare_${x}`] = imm > 0 ? (100 * cnt(x)) / imm : NaN;
+        });
+        for (const [t, s] of nestPairs) Object.assign(r, logk(`nest_${t}_near_${s}`));
+        for (const src of GRAD_SOURCES) for (const lab of GRAD_LABELS) {
+          Object.assign(r, logk(`grad_${src}_${lab}`));
+          for (const col of states) { const o = a[`grad_${src}_${lab}_${col}_mean`]; if (o) r[`grad_${src}_${lab}_${col}`] = val(o, MIN_PER_PATIENT); }
+        }
+        for (const src of sources) {
+          const cols = states.concat(src in bleed ? [bleed[src]] : []);
+          for (const col of cols) Object.assign(r, touch(`nest_${src}Touch_${col}`));
+          for (const s of subs) for (const col of states) Object.assign(r, touch(`nest_${src}Touch_${s}_${col}`));
+        }
+      }
+      for (const name of Object.keys(macStates)) Object.assign(r, touch(`TmacTouch_${name}`));
+      for (const name of Object.keys(macStates)) Object.assign(r, touch(`nest_TmacTouch_${name}`));
+      out.set(pat, r);
+    }
+    return out;
+  }
+
   // ---- recipe: one row per patient ----
   function patientRows(cells, m, onProgress) {
     const extra = Object.keys(m.extra_roles || {});
@@ -337,8 +648,9 @@
     const byPF = groupIndex(imageKeys(cells));
     const acc = new Map();
     let done = 0;
+    const t0 = Date.now();
     for (const [key, ix] of byPF) {
-      if (onProgress) onProgress(done++ / byPF.size);
+      if (onProgress) onProgress(0.5 * done++ / byPF.size);   // the legacy loop is the first half, the v3p pass the second
       const [pat, field] = key.split("\u0000");
       if (!acc.has(pat)) acc.set(pat, {});
       const a = acc.get(pat);
@@ -391,6 +703,11 @@
       }
       rows.push(r);
     }
+    // v3p: compartments, composition, nest proximity, gradients, macrophage state (appended after the v2p.1 columns)
+    const t1 = Date.now();
+    const extraCols = v3pPass(cells, m, { roles, states, bleed, pairs, sources, pct, byPF, byField, patients: [...acc.keys()] }, onProgress && ((f) => onProgress(0.5 + 0.5 * f)));
+    for (const r of rows) Object.assign(r, extraCols.get(r.patient));
+    patientRows.timing = { legacy_s: (t1 - t0) / 1000, v3p_s: (Date.now() - t1) / 1000 };
     return rows;
   }
 
@@ -448,9 +765,9 @@
       spans.push(Math.max(x1 - x0, y1 - y0));
     }
     const span = median(spans), med = medianSpacing(cells);
-    add("cell spacing", med >= 5 && med <= 15 ? "pass" : "fail", `median distance to the nearest cell: ${Number.isFinite(med) ? f1(med) : "?"} µm (expected 5–15)`,
+    add("cell spacing", med >= MIN_SPACING && med <= 15 ? "pass" : "fail", `median distance to the nearest cell: ${Number.isFinite(med) ? f1(med) : "?"} µm (expected ${MIN_SPACING}–15)`,
       med === 0 ? "Many cells sit exactly on top of each other: check for duplicated files or rows." :
-      med < 5 ? `Distances look too small. If your coordinates are in pixels, the pixel size may be too low; if they are already in µm, set pixel size to 1. Implied pixel size: ${f1(8 / (med / Number(m.pixel_size_um)))} µm.` :
+      med < MIN_SPACING ? `Distances look too small. If your coordinates are in pixels, the pixel size may be too low; if they are already in µm, set pixel size to 1. Implied pixel size: ${f1(8 / (med / Number(m.pixel_size_um)))} µm.` :
       med > 15 ? `Distances look too large. Check the pixel size (implied: ${(8 / (med / Number(m.pixel_size_um))).toFixed(3)} µm), and that x and y are positions, not areas or IDs.` : "");
     add("image size", span >= 100 && span <= 100000 ? "pass" : "fail", `median image width ${span >= 1000 ? f1(span / 1000) + " mm" : f1(span) + " µm"} across ${byImg.size} images`,
       span < 100 ? "Images look tiny. The image column may split one image into many (each cell its own image?), or the pixel size is wrong." :
@@ -484,9 +801,35 @@
           "Rules need yes/no columns (0/1, Positive/Negative). For HALO use the '… Positive' columns, not '… Intensity'.");
       }
     }
+    // ---- tumor compartments and T subsets (recipe v3p) ----
+    const nTumor = counts.tumor || 0;
+    if (!nTumor) add("tumor cells", "warn", "no label maps to the tumor role: compartments are unavailable, only whole-image results are computed",
+      "If the panel has a tumor / epithelial marker, map those labels (or a PanCK rule) to Tumor cell.");
+    else {
+      const cp = compartmentsFor(cells, byImg), comp = cp.comp;
+      let unk = 0;
+      for (const idx of byImg.values()) { let allUnknown = true; for (const i of idx) if (comp[i] !== 3) { allUnknown = false; break; } if (allUnknown) unk++; }
+      add("tumor cells", "pass", `${nTumor.toLocaleString()} tumor cells; compartments from ` +
+        (cp.explicit ? "the annotation column" : "geometry (nest = at least half of the cells within 50 µm are tumor cells; margin = within 100 µm of a nest cell)") +
+        (unk ? `; ${unk} of ${byImg.size} images have no usable compartment and are skipped by compartment metrics` : ""));
+      let known = 0, nest = 0, tNest = 0;
+      for (let i = 0; i < cells.n; i++) { const c = comp[i]; if (c === 3) continue; known++; if (c === 0) { nest++; if (cells.type[i] === "T") tNest++; } }
+      if (known) {
+        const frac = nest / known, bad = frac < MIN_NEST_FRAC || tNest < MIN_NEST_T;
+        add("nest size", bad ? "warn" : "pass", `nest holds ${(100 * frac).toFixed(0)}% of cells and ${tNest.toLocaleString()} T cells` +
+          (bad ? ` (below ${100 * MIN_NEST_FRAC}% of cells or ${MIN_NEST_T} T cells: nest tests will be weak)` : ""),
+          bad ? "Nest results rest on few cells. Treat them as weak evidence." : "");
+      } else add("nest size", "warn", "no image has a compartment: nest tests are skipped", "");
+    }
+    if (counts.T) {
+      const tsub = {}; for (let i = 0; i < cells.n; i++) if (cells.type[i] === "T") { const s = cells.sub ? cells.sub[i] : 0; tsub[s] = (tsub[s] || 0) + 1; }
+      const have = SUBS.map((nm, k) => [nm, tsub[k + 1] || 0]).filter(([, c]) => c > 0).map(([nm, c]) => `${nm} (${c.toLocaleString()})`);
+      add("T subsets", have.length ? "pass" : "warn", have.length ? `present: ${have.join(", ")}; T cells without subset: ${(tsub[0] || 0).toLocaleString()}` : "no T subset in the labels: subset tests are skipped",
+        have.length ? "" : "Subsets (CD8, CD4, Treg) are read from the cell-type labels or marker columns. Without them only all-T results are shown.");
+    }
     // ---- readouts ----
     for (const [k, st] of Object.entries(d.colStats || {})) {
-      const label = k.startsWith("bleed_") ? `bleed marker (${k.slice(6)})` : `readout ${k}`;
+      const label = k.startsWith("bleed_") ? `bleed marker (${k.slice(6)})` : k.startsWith("macstate_") ? `macrophage marker (${k.slice(9)})` : `readout ${k}`;
       const tot = st.n + st.nan;
       if (st.n === 0) add(label, "warn", `"${st.col}" has no numbers` + (st.textEx.length ? ` (values look like: ${st.textEx.join(", ")})` : ""),
         "Left out of the analysis. Choose a numeric intensity column for it, or set it to not available.");
@@ -517,7 +860,8 @@
     return out;
   }
 
-  const api = { VERSION, ROLES, STATES, fnv1a, mulberry32, choose, createParser, eachCSVRow, csvHeader, detectDelim, prepText, sniff, derive, truthy, FILE_COL, ONE_COL,
-    createImporter, importCells, importFiles, patientRows, runChecks, medianSpacing, pctRankByField, usable, imageKeys };
+  const api = { VERSION, num, ROLES, STATES, fnv1a, mulberry32, choose, createParser, eachCSVRow, csvHeader, detectDelim, prepText, sniff, derive, truthy, FILE_COL, ONE_COL,
+    createImporter, importCells, importFiles, patientRows, runChecks, medianSpacing, pctRankByField, usable, imageKeys,
+    SUBS, COMP_NAMES, GRAD_LABELS, GRAD_EDGES, compartmentsFor };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.Recipe = api;
 })(typeof self !== "undefined" ? self : this);

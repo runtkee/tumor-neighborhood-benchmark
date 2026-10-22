@@ -48,3 +48,33 @@ def test_planted_contact_effect_found(tmp_path):
     rows = compute(df, m)
     assert (rows["macTouch_prolif_diff"] > 10).all()          # planted effect, every patient
     assert rows["neutTouch_prolif_diff"].abs().median() < 10  # no effect where none was planted
+
+
+def test_cell_spacing_lower_bound(tmp_path):
+    m = _write(tmp_path, px=0.5, plant=False)
+    df = load_cells(m)
+    nn = np.median([np.median(__import__("scipy.spatial", fromlist=["cKDTree"]).cKDTree(g[["x_um", "y_um"]].to_numpy()).query(
+        g[["x_um", "y_um"]].to_numpy(), k=2)[0][:, 1]) for _, g in df.groupby("field")])
+    for target, want in ((4.5, "pass"), (3.5, "fail")):
+        m2 = dict(m, pixel_size_um=0.5 * target / nn)
+        res = [r for r in checks.run_checks(load_cells(m2), m2) if r[0].startswith("cell spacing")][0]
+        assert res[1] == want and "4–15" in res[2], res
+
+
+def test_patient_rule_derives_ids_like_the_browser():
+    from bio.kit.importers import derive
+    rule = {"mode": "regex", "regex": "crc_([a-z]+)_"}
+    assert derive("run1_crc_d_c", rule) == "d" and derive("run2_crc_d_m", rule) == "d"
+    assert derive("no_match", rule) == "no_match"                      # unmatched values stay whole
+    assert derive("P01_core", {"mode": "before", "sep": "_"}) == "P01"
+    assert derive("abc", {"mode": "regex", "regex": "b"}) == "b"       # no group -> whole match
+    assert derive("abc", {"mode": "regex", "regex": "("}) == "abc"     # bad pattern -> value
+    assert derive("abc", None) == "abc"
+
+
+def test_patient_rule_is_applied_to_the_cell_table(tmp_path):
+    m = _write(tmp_path, px=0.5)
+    m["patient_rule"] = {"mode": "before", "sep": "_"}   # "P0" .. "P5" have no "_": unchanged
+    m["field_rule"] = {"mode": "regex", "regex": "^(P\\d)"}  # "P3_1" -> "P3"
+    df = load_cells(m)
+    assert set(df["patient"]) == {f"P{i}" for i in range(6)} and set(df["field"]) == {f"P{i}" for i in range(6)}

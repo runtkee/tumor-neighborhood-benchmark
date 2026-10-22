@@ -4,6 +4,9 @@
   python -m bio.kit check <manifest.yaml>                            validate manifest + data, print checks
   python -m bio.kit run <manifest.yaml> --out DIR [--force] [--exclude-ref NAME ...]
                                                                       compute, compare to the reference, write report.html
+  python -m bio.kit xenium <bundle_dir_or_h5ad> [...] --dataset NAME --out DIR [--patient ID | --patient-from parent|dirname]
+                                      [--areas <coordinates.csv|none> ...] | --samplesheet <samplesheet.csv> [--regions R ...]
+                                                                      read a 10x Xenium bundle, label cells from markers, write h5ad + report + draft manifest
   python -m bio.kit build-reference <manifest.yaml> ...              (maintainers) add public datasets to the bundled reference
 """
 import argparse
@@ -53,7 +56,10 @@ def main(argv=None):
     c = sub.add_parser("check"); c.add_argument("manifest")
     r = sub.add_parser("run"); r.add_argument("manifest"); r.add_argument("--out", required=True)
     r.add_argument("--force", action="store_true"); r.add_argument("--exclude-ref", nargs="*", default=[])
+    from .xenium_cmd import add_args as _xen_args
+    _xen_args(sub.add_parser("xenium"))
     b = sub.add_parser("build-reference"); b.add_argument("manifests", nargs="+")
+    b.add_argument("--force", action="store_true", help="build even if checks fail (maintainers; say why in the manifest)")
     a = p.parse_args(argv)
 
     if a.cmd == "suggest":
@@ -75,10 +81,15 @@ def main(argv=None):
         path = build(out, m, res, forced, rows, ref, src)
         print(f"\nreport: {path}\nshareable summary (no cell data, random patient codes): {out / 'share_summary.csv'}"
               f"\nkey linking codes to patients (keep private): {out / 'patient_key_KEEP_PRIVATE.csv'}")
+    elif a.cmd == "xenium":
+        from .xenium_cmd import run as _xen_run
+        _xen_run(a)
     elif a.cmd == "build-reference":
         REF_DIR.mkdir(exist_ok=True)
         for mp in a.manifests:
-            m, df, _, _ = _load_checked(mp)
+            m, df, _, forced = _load_checked(mp, a.force)
+            if forced:
+                print(f"WARNING: {m['dataset']} built with --force despite failed checks")
             rows = compute(df, m)
             rows.to_csv(REF_DIR / f"{m['dataset']}.csv", index=False)
             print(f"reference: {m['dataset']} ({rows['patient'].nunique()} patients)")

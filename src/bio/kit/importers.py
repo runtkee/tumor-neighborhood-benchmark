@@ -1,7 +1,11 @@
 """Turn a dataset + manifest into the kit's cell table: one row per cell with
 patient, field, x_um, y_um, raw_type, type (role), one column per state, one bleed_<role> column per bleed marker."""
+import re
+
 import numpy as np
 import pandas as pd
+
+from . import DEFAULT_MAC_IDENTITY_GENES
 
 
 def load_cells(m):
@@ -35,7 +39,17 @@ def _protein(m):
         df[s] = src[col].values
     for r, col in m.get("bleed", {}).items():
         df[f"bleed_{r}"] = src[col].values
+    for s, col in m.get("mac_states", {}).items():
+        df[f"macstate_{s}"] = src[col].values
+    if c.get("compartment"):  # explicit annotation (pathologist, HALO "Analysis Region") wins over geometry
+        df["comp"] = _comp(src[c["compartment"]], m)
     return _roles(df, m)
+
+
+def _comp(col, m):
+    """Annotation labels -> nest | margin | far through the manifest's `compartments` map; unlisted labels -> unknown."""
+    lab = {str(k): v for k, v in m["compartments"].items()}
+    return col.astype(str).map(lab).fillna("unknown").values
 
 
 def _rna(m):
@@ -65,11 +79,44 @@ def _rna(m):
         df[s] = np.log((cnt(genes) + 0.5) / (ident + 0.5))  # relative to T identity: cancels dilution
     for r, genes in m.get("bleed", {}).items():
         df[f"bleed_{r}"] = 1000 * cnt(genes) / tot
+    if m.get("mac_states"):
+        mident = cnt(m.get("mac_identity_genes", DEFAULT_MAC_IDENTITY_GENES))
+        for s, genes in m["mac_states"].items():
+            df[f"macstate_{s}"] = np.log((cnt(genes) + 0.5) / (mident + 0.5))  # relative to macrophage identity
+    if c.get("compartment"):
+        df["comp"] = _comp(a.obs[c["compartment"]], m)
     return _roles(df, m)
 
 
+def derive(value, rule):
+    """Patient / image ID from part of a value; same rules as derive() in web/recipe.js.
+    rule: None or {mode: whole} -> value; {mode: before, sep: "_"} -> text before the first sep;
+    {mode: regex, regex: "..."} -> first capture group (or the whole match); the value itself when nothing matches."""
+    if not rule or rule.get("mode", "whole") == "whole":
+        return value
+    if rule["mode"] == "before":
+        k = value.find(rule["sep"])
+        return value[:k] if k > 0 else value
+    if rule["mode"] == "regex":
+        try:
+            mm = re.search(rule["regex"], value)
+        except re.error:
+            return value
+        if not mm:
+            return value
+        return mm.group(1) if mm.re.groups >= 1 and mm.group(1) is not None else mm.group(0)
+    return value
+
+
 def _roles(df, m):
-    df["type"] = df["raw_type"].map(m["roles"]).fillna("unmapped")
+    for key, rule in (("patient", m.get("patient_rule")), ("field", m.get("field_rule"))):
+        if rule:
+            uniq = {v: derive(v, rule) for v in pd.unique(df[key])}
+            df[key] = df[key].map(uniq).values
+    role = df["raw_type"].map(m["roles"]).fillna("unmapped").astype(str)
+    # a role value may carry a T subset: "T:CD8" -> type T, sub CD8 (plain "T" -> sub "T" = subset unknown)
+    df["type"] = role.str.split(":").str[0].values
+    df["sub"] = np.where(role.str.startswith("T:"), role.str.split(":").str[1], "T")
     df = df[df["type"] != "drop"]
     df = df[np.isfinite(df["x_um"].astype(float)) & np.isfinite(df["y_um"].astype(float))].reset_index(drop=True)  # no position, no distance
     min_f = int(m.get("min_cells_per_field", 0) or 0)

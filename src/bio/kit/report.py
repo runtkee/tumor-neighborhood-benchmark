@@ -12,7 +12,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from . import STATES
+from bio.pooled import pooled
+
+from . import MAC_STATES, STATES
 
 STATE_LABEL = {"prolif": "dividing (Ki-67)", "PD1": "PD-1", "GZMB": "granzyme B", "LAG3": "LAG-3", "ICOS": "ICOS",
                "apoptosis": "dying (cleaved PARP)"}
@@ -34,11 +36,66 @@ def claims(extra_roles, extra_states):
         ("Control: T cells touching stroma", "Same contact test with stromal cells. Effects here flag technical contact artifacts.",
          [f"stromaTouch_{s}_diff" for s in st], ["stromaTouch_bleed_stroma_diff"], ""),
     ]
+    c += [
+        ("Tumor nest: T cells vs neutrophils", "Same share test restricted to T cells inside the tumor nest; the shuffle keeps the number of neutrophils per compartment.",
+         ["nest_T_near_neut_log2", "nest_CD8_near_neut_log2", "nest_CD4_near_neut_log2", "nest_Treg_near_neut_log2"], ["nest_B_near_neut_log2"],
+         "Control: B cells in the nest."),
+        ("Tumor nest: T cells vs macrophages", "Share of nest T cells within 30 µm of a macrophage vs stratified shuffle (log2).",
+         ["nest_T_near_mac_log2", "nest_CD8_near_mac_log2", "nest_CD4_near_mac_log2", "nest_Treg_near_mac_log2"], [], ""),
+        ("Tumor nest: state of T cells touching neutrophils", "Percentile-point difference, nest T cells <10 µm vs ≥30 µm from a neutrophil.",
+         [f"nest_neutTouch_{s}_diff" for s in st], ["nest_neutTouch_bleed_neut_diff"], ""),
+        ("Tumor nest: state of T cells touching macrophages", "Percentile-point difference, nest T cells <10 µm vs ≥30 µm from a macrophage.",
+         [f"nest_macTouch_{s}_diff" for s in st], ["nest_macTouch_bleed_mac_diff"], ""),
+        ("Macrophage state next to T cells", "Percentile-point difference of the macrophage marker, all macrophages <10 µm from a T cell vs ≥30 µm.",
+         [f"TmacTouch_{s}_diff" for s in MAC_STATES], [], ""),
+        ("Tumor nest: macrophage state next to T cells", "Same comparison for macrophages inside the tumor nest only.",
+         [f"nest_TmacTouch_{s}_diff" for s in MAC_STATES], [], ""),
+    ]
     for r, proxy in extra_roles.items():
         c.append((f"Private-only: T cells near {r} (public proxy: {proxy})",
                   f"Public datasets have no '{r}' label; the closest public role '{proxy}' is shown for context.",
                   [f"T_near_{r}_log2"] + [f"{r}Touch_{s}_diff" for s in st], [f"T_near_{proxy}_log2"], ""))
     return c
+
+
+def _composition(priv):
+    """Median [IQR] percent of cells per compartment (one value per patient), or '' when no compartments were computed."""
+    roles = [r for r in ["T", "CD8", "CD4", "Treg", "neut", "mac", "B"] if f"comp_nest_pct_{r}" in priv.columns]
+    if not roles or "comp_nest_cells" not in priv.columns:
+        return ""
+    f = lambda v: "—" if not len(v) else f"{v.median():.1f} [{v.quantile(.25):.1f}–{v.quantile(.75):.1f}]"
+    out = ["<h2>Composition by compartment</h2><p class='mut'>Percent of all cells in the compartment; median [IQR] over your patients. "
+           "Nest = tumor-dominated neighbourhood, margin = within 100 µm of it, far = the rest.</p>",
+           "<div class='wrap'><table><tr><th>compartment</th><th>cells (median)</th>" + "".join(f"<th>% {r}</th>" for r in roles) + "</tr>"]
+    for c in ["nest", "margin", "far"]:
+        cells = priv[f"comp_{c}_cells"].dropna()
+        out.append(f"<tr><td>{c}</td><td>{cells.median():.0f}</td>" +
+                   "".join(f"<td>{f(priv[f'comp_{c}_pct_{r}'].dropna())}</td>" for r in roles) + "</tr>")
+    out.append("</table></div>")
+    return "".join(out)
+
+
+def _pooled_table(metrics, ref, priv, priv_name):
+    """Pooled estimate (recipe v3p.1) for contact tests that carry the sums: one row per metric and dataset. '' when none do."""
+    f = lambda x: "—" if x is None or pd.isna(x) else f"{x:+.1f}"
+    body = []
+    for m in metrics:
+        if not m.endswith("_diff"):
+            continue
+        base = m[:-5]
+        sets = [(d, g) for d, g in ref.groupby("dataset")] if f"{base}_near_sum" in ref else []
+        sets.append((f"YOURS {priv_name}", priv))
+        for d, g in sets:
+            p = pooled(g, base) if f"{base}_near_sum" in g else None
+            if p is None:
+                continue
+            body.append(f"<tr><td>{html.escape(base)}</td><td>{html.escape(str(d))}</td><td>{p['n_near']:,}</td><td>{p['patients']}</td>"
+                        f"<td><b>{f(p['diff'])}</b></td><td>{f(p['lo'])} to {f(p['hi'])}</td></tr>")
+    if not body:
+        return ""
+    return ("<p class='mut'>Pooled across patients (every cell counts once; 95% interval from a patient bootstrap). "
+            "Pooled estimate, not per patient.</p><div class='wrap'><table><tr><th>test</th><th>dataset</th><th>cells touching</th>"
+            "<th>patients</th><th>pooled difference (pct-pts)</th><th>95% interval</th></tr>" + "".join(body) + "</table></div>")
 
 
 def _png(fig):
@@ -117,6 +174,7 @@ def build(out_dir, m, checks, forced, priv, ref, ref_sources):
     parts.append("</table></div>")
     if forced:
         parts.append("<p class='fail'>Run was forced despite failed checks. Treat results as unreliable.</p>")
+    parts.append(_composition(priv))
     for title, desc, metrics, controls, note in claims(m.get("extra_roles", {}), m.get("extra_states", [])):
         mets = [x for x in metrics + controls if x in priv.columns or x in ref.columns]
         if not mets:
@@ -127,7 +185,9 @@ def build(out_dir, m, checks, forced, priv, ref, ref_sources):
         parts.append("<div class='wrap'><table><tr><th>metric</th><th>public n</th><th>public median</th><th>public IQR</th>"
                      "<th>your n</th><th>your median</th><th>your median's percentile among public</th><th>direction</th></tr>")
         parts += [_row(x, ref, priv) for x in mets]
-        parts.append("</table></div><div class='plots'>")
+        parts.append("</table></div>")
+        parts.append(_pooled_table(mets, ref, priv, name))
+        parts.append("<div class='plots'>")
         for x in mets:
             img = _strip(x, ref, priv, name)
             if img:

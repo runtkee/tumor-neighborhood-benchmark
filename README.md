@@ -8,7 +8,7 @@ Compare a tumor-imaging cell table with 218 public patients on a fixed set of ne
 
 **Open it:** https://runtkee.github.io/tumor-neighborhood-benchmark/
 
-The page opens with the public datasets in the left panel, each with its summary findings. Add your own cell table (one or several files) and it is read automatically, checked, analysed, and listed next to them. Tick datasets to compare them side by side.
+The page opens with the public datasets in the left panel, each with its summary findings. Add your own data with **Add data**: either a cell table (one or several files), which is read automatically, checked, analysed and listed next to them, or a per-patient results table written by the Python kit (`share_summary.csv`, `patients_full.csv`, or a `src/bio/kit/reference/*.csv` file), which is shown as it is, without computing anything. A results table is recognised from its header (`dataset`, `patient`, `recipe` and at least one `_log2` or `_diff` column) and is listed with a "kit results" tag, one entry per `dataset` value. This is how RNA cohorts (Xenium, CosMx) run in the kit appear in the page. "How this file was read" lists the columns used and the recipe-version check; results from another recipe version are shown but flagged as possibly not comparable. Tick datasets to compare them side by side.
 
 ## Loaded data stays on your computer
 - The page computes everything inside your browser tab. It has no server component.
@@ -25,7 +25,10 @@ There are no settings, apart from the pixel size question below. The app decides
 | Units | Stated in the column name (µm); recognised from the export format (CODEX processor naming, inForm pixels); otherwise estimated from cell spacing |
 | Patient, image | Columns named like patient / donor / case and image / core / FOV; checked that every image belongs to one patient; otherwise taken from file or image names |
 | Cell types | The label column whose values are recognised cell types ("CD8+ T cells", "CD68+CD163+ macrophages", "Neutrophil", "MacCD163") **and** whose labelled cells actually carry that type's marker. Region columns such as "neighborhood name" are ruled out this way. If there are no labels, yes/no columns named after lineage markers (CD3, CD68, CD66b, …) are turned into rules |
+| T-cell subsets | Read from the cell-type label: Treg / FOXP3 → Treg, CD8 → CD8, CD4 → CD4. A label naming both CD4 and CD8, or neither, stays plain T. With marker yes/no columns, rules are applied in the order Treg, CD8, CD4, then plain T |
 | Readouts | Columns named after Ki-67, PD-1, granzyme B, LAG-3, ICOS and cleaved PARP; mean intensity preferred |
+| Macrophage markers | Columns named after PD-L1, IDO1, CD163 or HLA-DR (mean intensity preferred); compared between macrophages touching T cells and macrophages far from them |
+| Tumor compartments | Computed from cell positions: nest = tumor cells are at least half of the cells within 50 µm; margin = within 100 µm of a nest; far = the rest. No tumor label means whole-image results only. Each decision appears in "How this file was read" |
 
 **What it can't read:**
 - **HALO exports that name markers only by dye** ("Dye 3 Positive"). The file never says which antibody Dye 3 is, so the app explains this and asks for an export with marker names or a phenotype column.
@@ -43,7 +46,7 @@ Nothing is compared until the data passes its checks. Every problem names the fi
   - unusable coordinates;
   - empty patient or image IDs;
   - duplicated cells (the same file loaded twice);
-  - wrong pixel size (cell spacing outside 5–15 µm, with the implied correct value);
+  - wrong pixel size (cell spacing outside 4–15 µm, with the implied correct value);
   - implausible image sizes;
   - no T cells;
   - a marker rule built on an intensity column instead of a yes/no flag;
@@ -65,11 +68,14 @@ Expect a typical 8 GB laptop to handle about 2–3 million cells and a 16 GB lap
 
 The Python kit's RNA path reads whole AnnData files into memory. The SPATCH files used for the reference (1–3 GB each) need a 16 GB+ machine.
 
-## Method (locked recipe v2p.1)
+## Method (locked recipe v3p.1)
 - Touching = under 10 µm; nearby = under 30 µm.
 - Every proximity test is compared against labels shuffled within each image (20 shuffles), so tissue layout is held fixed.
 - Marker levels are within-image percentiles, so brightness differences between images cancel.
 - Each patient contributes one value.
+- v3p adds tumor compartments (nest, margin, far), the immune composition of each, proximity tests inside the nest (labels shuffled within each compartment), T-cell subsets (CD8, CD4, Treg), distance gradients (0–5 to 100+ µm), and macrophage markers next to T cells. The v2p.1 numbers are unchanged.
+- v3p.1 changes two things inside the nest. The shuffled labels are drawn from non-tumor cells only, so immune and stromal cells that share the non-epithelial strands of a nest do not read as enrichment. And the sparse contact tests (nest T cells touching neutrophils or macrophages, macrophage markers next to T cells) also report per-patient sums, so a pooled estimate with a patient-bootstrap 95% interval can be shown when too few patients have 20 cells per arm. A pooled estimate is not a per-patient result, and the page says so. `TmacTouch_*` now covers all macrophages in the image; `nest_TmacTouch_*` is the nest-only version.
+- The public reference was built with v3p. The tumor-free null pool and the pooled lines appear once it is rebuilt with v3p.1; the page shows pooled lines only where the sums exist.
 - Automatic checks must pass first: cell spacing (catches a wrong pixel size), cells per role, each cell type's own marker being high in it, and number of patients.
 
 Details: [docs/recipe.md](docs/recipe.md), [docs/kit.md](docs/kit.md).

@@ -10,14 +10,18 @@ Example (protein, CSV):
     states: {prolif: "Ki67 - proliferation:Cyc_5_ch_4", ...}          # canonical state -> column
     bleed: {neut: "CD15 - granulocytes:Cyc_14_ch_2", ...}             # role -> that role's own marker
     extra_roles: {pmn_mdsc: neut}     # private-only roles -> nearest public proxy role (optional)
+    roles may carry a T subset: "CD8+ T cells": "T:CD8"   # T:CD8 | T:CD4 | T:Treg (plain T = subset unknown)
+    mac_states: {PDL1: "PD-L1 ...", CD163: "CD163 ..."}   # macrophage-state columns (optional; PDL1 IDO1 CD163 HLADR ARG1)
+    columns.compartment: "Analysis Region" + compartments: {Tumor: nest, Invasive margin: margin, Stroma: far}   # optional
 For modality rna (h5ad): columns.x / columns.y may be "obsm:spatial:0" / "obsm:spatial:1", states and bleed
 take gene lists, and identity_genes gives the T-identity genes that RNA states are expressed relative to.
+mac_states take gene lists too, expressed relative to mac_identity_genes (default CD68 CD14 CSF1R C1QA C1QB C1QC).
 """
 from pathlib import Path
 
 import yaml
 
-from . import ROLES, STATES
+from . import COMPARTMENT_LABELS, MAC_STATES, ROLES, STATES, SUBS
 
 REQUIRED = ["dataset", "modality", "path", "columns", "pixel_size_um", "roles"]
 
@@ -39,12 +43,22 @@ def problems(m):
         if k not in m["columns"]:
             out.append(f"columns.{k} missing")
     allowed = set(ROLES) | {"drop"} | set(m.get("extra_roles", {}))
-    bad = sorted({r for r in m["roles"].values() if r not in allowed})
+    plain = lambda r: "T" if isinstance(r, str) and r.startswith("T:") and r[2:] in SUBS else r
+    bad = sorted({str(r) for r in m["roles"].values() if plain(r) not in allowed})
     if bad:
         out.append(f"unknown roles: {bad} (allowed: {sorted(allowed)})")
     for s in m.get("states", {}):
         if s not in STATES and s not in m.get("extra_states", []):
             out.append(f"unknown state {s!r}; add it to extra_states to mark it private-only")
+    for s in m.get("mac_states", {}):
+        if s not in MAC_STATES:
+            out.append(f"unknown macrophage state {s!r} (allowed: {MAC_STATES})")
+    if m["columns"].get("compartment"):
+        bad = sorted({str(v) for v in m.get("compartments", {}).values() if v not in COMPARTMENT_LABELS})
+        if not m.get("compartments"):
+            out.append("columns.compartment needs a `compartments` map: label -> nest | margin | far")
+        elif bad:
+            out.append(f"compartments map to unknown values {bad} (allowed: {COMPARTMENT_LABELS})")
     for r, proxy in m.get("extra_roles", {}).items():
         if proxy not in ROLES:
             out.append(f"extra role {r}: proxy {proxy!r} is not a public role")

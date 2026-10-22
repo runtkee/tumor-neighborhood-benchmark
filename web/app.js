@@ -12,7 +12,7 @@
   const DS = [];  // {id, label, short, kind, status, rows, findings, sens, report, checks, fails, meta, color, n, progress}
   const selected = new Set();
   for (const d of REF.datasets) {
-    const rows = REF.rows.filter((r) => r.dataset === d.id);
+    const rows = d.data.map((v) => { const r = { dataset: d.id }; d.cols.forEach((c, i) => { r[c] = v[i]; }); return r; });  // columnar in the page, row objects here
     DS.push({ id: d.id, label: d.label, short: d.short, kind: "public", status: "ready", rows, n: d.n, findings: Findings.summarize(rows), color: "var(--ref)" });
   }
   ["IMMUcan_IMC_panel1", "CODEX_CRC_Schurch2020"].forEach((id) => selected.add(id));
@@ -24,6 +24,34 @@
     const toCSV = (header, rows) => [header].concat(rows).map((r) => r.map((v) => (/[",\n\r]/.test(v) ? '"' + String(v).replace(/"/g, '""') + '"' : v)).join(",")).join("\n");
     const held = new Map();  // datasets waiting for a pixel size
     let key = null;
+    // A per-patient results table written by the Python kit: shown as it is, nothing is computed (no pixel size question either).
+    async function tryKitResults(id, files) {
+      const isKit = [];
+      for (const f of files) isKit.push(AutoMap.isKitHeader(Recipe.csvHeader(await f.slice(0, 1 << 18).text()), f.size));
+      if (!isKit.some(Boolean)) return null;
+      progress(id, "Reading results table", 0);
+      const parts = [];
+      for (let i = 0; i < files.length; i++) {
+        const out = isKit[i] ? AutoMap.readKitResults(await files[i].slice(0, files[i].size).text(), files[i].name, Recipe.VERSION) : null;
+        if (!out) {
+          if (files.length === 1 && isKit[i]) return null;  // too many rows for a results table: read it as a cell table
+          return { fails: [{ title: files.length === 1 ? `${files[i].name} is not a results table` : "These files mix results tables and cell tables", why: "A kit results table has one row per patient. This file has too many rows.", fix: "Add kit results tables and cell tables as separate datasets." }] };
+        }
+        parts.push(out);
+      }
+      const merged = new Map();  // dataset id -> {rows, report, checks}; several files with the same dataset id are stacked
+      for (const p of parts) for (const d of p.datasets) {
+        const m = merged.get(d.id);
+        if (!m) merged.set(d.id, { ...d }); else { m.rows = m.rows.concat(d.rows); m.checks = d.checks; m.report = d.report; }
+      }
+      if (parts.length > 1) for (const m of merged.values()) {  // recompute the patient check on the stacked rows
+        const dup = m.rows.length - new Set(m.rows.map((r) => r.patient)).size;
+        if (dup) m.checks = m.checks.map((c) => (c[0] === "patients" ? [c[0], "warn", `${m.rows.length - dup} patients; ${dup} rows repeat a patient already listed (files stacked)`, "Check that the files hold different runs."] : c));
+      }
+      const sets = [...merged.values()].filter((d) => d.rows.length);
+      if (!sets.length) return { fails: [{ title: "The results table has no patient rows", why: "Every row had an empty patient ID.", fix: "Check that the file is the kit's patients_full.csv or share_summary.csv." }] };
+      return { kitResults: sets };
+    }
     async function analyse(id, fileList) {
       const files = fileList.map(asBlob), fails = [];
       for (const f of files) {
@@ -32,6 +60,8 @@
         if (bad) fails.push({ title: bad.title, why: "", fix: bad.fix });
       }
       if (fails.length) return { fails };
+      const kit = await tryKitResults(id, files);
+      if (kit) return kit;
       progress(id, "Sampling", 0);
       const samples = [];
       for (const f of files) {
@@ -125,21 +155,36 @@
   let queue = Promise.resolve();
   function addFiles(files) {
     if (!files.length) return;
-    const nLoaded = DS.filter((d) => d.kind === "loaded").length;
+    const nLoaded = DS.filter((d) => d.kind !== "public").length;
     const d = { id: "loaded-" + Date.now() + "-" + nLoaded, label: datasetName(files), kind: "loaded", status: "analysing", color: LOADED_COLORS[nLoaded % LOADED_COLORS.length],
       progress: { stage: "Waiting", f: 0 } };
     d.short = d.label.length > 16 ? d.label.slice(0, 15) + "…" : d.label;
     DS.push(d); render();
     queue = queue.then(() => settle(d, analyse(d.id, files, (p) => { d.progress = p; renderPanel(); })));  // one dataset at a time
   }
+  // A kit results table replaces its placeholder with one dataset per `dataset` value in the file.
+  function adoptResults(placeholder, sets) {
+    const at = DS.indexOf(placeholder), others = DS.filter((x) => x !== placeholder && x.kind !== "public").length;
+    const entries = sets.map((s, i) => {
+      let id = "results-" + s.id, k = 2; while (DS.some((x) => x.id === id)) id = `results-${s.id}-${k++}`;
+      const rows = s.rows;
+      const e = { id, label: s.id, short: s.id.length > 16 ? s.id.slice(0, 15) + "…" : s.id, kind: "results", status: "ready", rows, n: new Set(rows.map((r) => r.patient)).size,
+        findings: Findings.summarize(rows, { loaded: true, results: true }), sens: new Set(), report: s.report, checks: s.checks, fails: [], meta: null,
+        color: LOADED_COLORS[(others + i) % LOADED_COLORS.length] };
+      selected.add(id);
+      return e;
+    });
+    DS.splice(at < 0 ? DS.length : at, 1, ...entries);
+  }
   async function settle(d, job) {
     try {
       const out = await job;
+      if (out.kitResults) { adoptResults(d, out.kitResults); render(); return; }
       Object.assign(d, out, { needPx: out.needPx || null });
       if (out.fails && out.fails.length) d.status = "failed";
       else if (out.needPx) d.status = "needs-px";
       else {
-        d.status = "ready"; d.n = d.rows.length; d.findings = Findings.summarize(d.rows);
+        d.status = "ready"; d.n = d.rows.length; d.findings = Findings.summarize(d.rows, { loaded: true });
         d.sens = d.alt ? Findings.sensitivity(d.findings, d.alt) : new Set();
         selected.add(d.id); renderSummary(d);
       }
@@ -168,10 +213,31 @@
       `<button type="submit" class="primary">Use this value</button></div>` +
       `<p class="hint">Cell spacing suggests about ${np.estimate} µm. Not sure? <button type="button" class="linkish" data-estimate="1">Use the estimate</button>: results are then also recomputed at ±20% and fragile findings are flagged.</p></form>`;
   }
-  const REF_NOTE = `<li class="group-note"><b>Public reference</b>: 218 patients from three published studies, all measured with the same recipe. ` +
-    `IMMUcan: imaging mass cytometry of 179 tumors across 5 cancer types. CODEX: 35 colorectal cancers (Schürch et al. 2020). ` +
-    `SPATCH: one colon, ovarian and liver tumor each, imaged on several platforms (too few patients for summary findings, shown for comparison). ` +
-    `Only per-patient summary numbers are included, not the cell data.</li>`;
+  // Sidebar blurb, generated from the embedded reference (fields source/detail/unit/part come from SOURCE in web/build.py).
+  // Studies where every dataset has fewer patients than the per-patient rule needs (MIN_N = 5) are merged into one "shown for comparison" item.
+  function refNote(datasets) {
+    const WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"], MIN_N = 5;
+    const groups = new Map();
+    for (const d of datasets) {
+      if (!groups.has(d.source)) groups.set(d.source, { source: d.source, detail: d.detail || "", unit: d.unit || "patient", ds: [] });
+      groups.get(d.source).ds.push(d);
+    }
+    const plural = (n, unit) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+    const big = [...groups.values()].filter((g) => g.ds.some((d) => d.n >= MIN_N)), small = [...groups.values()].filter((g) => !big.includes(g));
+    const items = big.map((g, i) => {
+      const parts = g.ds.filter((d) => d.part), n = g.ds.reduce((a, d) => a + d.n, 0);
+      const count = parts.length > 1 ? `${parts.map((d) => `${d.n} ${esc(d.part)}`).join(" and ")} ${g.unit}s` : i === 0 ? plural(n, g.unit) : String(n);
+      return `${esc(g.source)} (${count}${g.detail ? ", " + esc(g.detail) : ""})`;
+    });
+    if (small.length) {
+      const all = small.flatMap((g) => g.ds), same = all.every((d) => d.n === all[0].n), unit = small[0].unit;
+      items.push(`${small.map((g) => esc(g.source)).join(" and ")} sections (${same ? plural(all[0].n, unit) + " each" : plural(all.reduce((a, d) => a + d.n, 0), unit) + " in total"}, shown for comparison)`);
+    }
+    const total = datasets.reduce((a, d) => a + d.n, 0), k = groups.size;
+    return `<li class="group-note"><b>Public reference</b>: ${total} patients from ${WORDS[k] || k} published studies, all measured with the same recipe: ${items.join("; ")}. ` +
+      `Only per-patient summary numbers are included, not the cell data.</li>`;
+  }
+  const REF_NOTE = refNote(REF.datasets);
   function renderPanel() {
     $("#dsets").innerHTML = REF_NOTE + DS.map((d) => {
       const [cls, txt] = STATUS_CHIP[d.status];
@@ -180,12 +246,12 @@
       if (d.status === "needs-px") body = pxForm(d);
       else if (d.status === "analysing") body = `<div class="bar"><i style="width:${Math.round((d.progress.f || 0) * 100)}%"></i></div><span class="hint">${esc(d.progress.stage)}…</span>`;
       else if (d.status === "failed") body = `<ul class="fails">${(d.fails || []).slice(0, 3).map((f) => `<li><b>${esc(f.title)}</b>${f.fix ? `<br><span class="hint">${esc(f.fix)}</span>` : ""}</li>`).join("")}</ul>`;
-      else if (d.findings.every((f) => f.status === "na")) body = `<p class="hint">${d.n < 5 ? `Only ${d.n} patient${d.n === 1 ? "" : "s"}: shown in the charts, too few for summary findings.` : "No summary findings for this dataset."}</p>`;
+      else if (d.findings.every((f) => f.status === "na" || f.key === "compartments")) body = `<p class="hint">${d.n < 5 ? `Only ${d.n} patient${d.n === 1 ? "" : "s"}: shown in the charts, too few for summary findings.` : "No summary findings for this dataset."}</p>`;
       else body = `<ul class="finds">${d.findings.filter((f) => f.status !== "na").map((f) => `<li class="f-${f.status}">${esc(f.text)}${d.sens && d.sens.has(f.key) ? ' <span class="chip warn">depends on estimated pixel size</span>' : ""}</li>`).join("")}</ul>`;
       return `<li class="dset${selected.has(d.id) ? " on" : ""}"><div class="dset-head"><label for="sel-${esc(d.id)}">${box}<i class="swatch" style="background:${d.color}"></i><span class="dname">${esc(d.label)}</span></label>` +
         `<span class="chip ${cls}">${txt}</span></div>` +
-        `<div class="dmeta">${d.kind === "public" ? "public reference" : "loaded"}${d.n ? ` · ${d.n} patient${d.n === 1 ? "" : "s"}` : ""}` +
-        `${d.kind === "loaded" && d.status !== "analysing" ? ` · <button type="button" class="linkish" data-remove="${esc(d.id)}">remove</button>` : ""}</div>${body}</li>`;
+        `<div class="dmeta">${d.kind === "public" ? "public reference" : d.kind === "results" ? "kit results" : "loaded"}${d.n ? ` · ${d.n} patient${d.n === 1 ? "" : "s"}` : ""}` +
+        `${d.kind !== "public" && d.status !== "analysing" ? ` · <button type="button" class="linkish" data-remove="${esc(d.id)}">remove</button>` : ""}</div>${body}</li>`;
     }).join("");
   }
   $("#dsets").addEventListener("change", (e) => { const id = e.target.dataset.id; if (!id) return; e.target.checked ? selected.add(id) : selected.delete(id); render(); });
@@ -205,20 +271,42 @@
   $("#dsets").addEventListener("input", (e) => { if (e.target.matches(".pxform input")) e.target.setCustomValidity(""); });
 
   // ---- comparison plots ----
+  // scope: "whole" = every cell in the image (recipe v2p.1 measures); "nest" = inside the tumor nest (recipe v3p).
+  const NEST_DESC = "Same test, restricted to cells inside the tumor nest. The chance level comes from shuffling labels within each compartment.";
   const CLAIMS = [
-    { title: "Do T cells keep away from neutrophils?", desc: "Share of T cells within 30 µm of a neutrophil, compared with shuffled labels. Below 0 means fewer T cells nearby than chance.",
+    { title: "Do T cells keep away from neutrophils?", scope: "whole", desc: "Share of T cells within 30 µm of a neutrophil, compared with shuffled labels. Below 0 means fewer T cells nearby than chance.",
       main: ["T_near_neut_log2"], control: ["B_near_neut_log2"], ctrlText: "Control: B cells. If they keep away just as much, the pattern is about lymphocyte zones, not T cells specifically.", unit: "log2" },
-    { title: "Do T cells gather near macrophages?", desc: "Share of T cells within 30 µm of a macrophage, compared with shuffled labels. Above 0 means more T cells nearby than chance.", main: ["T_near_mac_log2"], unit: "log2" },
-    { title: "Are T cells touching neutrophils different?", desc: "Percentile-point difference in each readout: T cells under 10 µm from a neutrophil minus T cells 30 µm or more away.",
+    { title: "Do T cells keep away from neutrophils?", scope: "nest", desc: "Share of T cells inside the tumor nest that have a neutrophil within 30 µm, compared with labels shuffled within each compartment. The same for CD8, CD4 and regulatory T cells.",
+      main: ["nest_T_near_neut_log2", "nest_CD8_near_neut_log2", "nest_CD4_near_neut_log2", "nest_Treg_near_neut_log2"], control: ["nest_B_near_neut_log2"], ctrlText: "Control: B cells in the nest.", unit: "log2" },
+    { title: "Do T cells gather near macrophages?", scope: "whole", desc: "Share of T cells within 30 µm of a macrophage, compared with shuffled labels. Above 0 means more T cells nearby than chance.", main: ["T_near_mac_log2"], unit: "log2" },
+    { title: "Do T cells gather near macrophages?", scope: "nest", desc: "Same test inside the tumor nest, for all T cells and for CD8, CD4 and regulatory T cells.",
+      main: ["nest_T_near_mac_log2", "nest_CD8_near_mac_log2", "nest_CD4_near_mac_log2", "nest_Treg_near_mac_log2"], unit: "log2" },
+    { gradient: true },
+    { title: "Are T cells touching neutrophils different?", scope: "whole", desc: "Percentile-point difference in each readout: T cells under 10 µm from a neutrophil minus T cells 30 µm or more away.",
       main: "neutTouch", control: ["neutTouch_bleed_neut_diff"], ctrlText: "Bleed: the neutrophil's own marker measured inside touching T cells. Large values mean contact comparisons are unreliable.", unit: "pct-pts" },
-    { title: "Are T cells touching macrophages different?", desc: "Same contact comparison for macrophages.", main: "macTouch", control: ["macTouch_bleed_mac_diff"], ctrlText: "Bleed: the macrophage marker inside touching T cells.", unit: "pct-pts" },
-    { title: "Control: T cells touching stroma", desc: "Same contact comparison for stromal cells. Effects here flag technical contact artifacts rather than biology.", main: "stromaTouch", control: ["stromaTouch_bleed_stroma_diff"], unit: "pct-pts", isControl: true },
-    { title: "T cells near the neutrophil subset (loaded data only)", desc: "A neutrophil subset found in loaded data (for example LOX-1+). Public datasets have no such label; all neutrophils are shown as the closest reference.",
+    { title: "Are T cells touching neutrophils different?", scope: "nest", desc: "Same contact comparison for T cells inside the tumor nest.", main: "nest_neutTouch", bySubset: true, control: ["nest_neutTouch_bleed_neut_diff"], ctrlText: "Bleed: the neutrophil marker inside touching T cells in the nest.", unit: "pct-pts" },
+    { title: "Are T cells touching macrophages different?", scope: "whole", desc: "Same contact comparison for macrophages.", main: "macTouch", control: ["macTouch_bleed_mac_diff"], ctrlText: "Bleed: the macrophage marker inside touching T cells.", unit: "pct-pts" },
+    { title: "Are T cells touching macrophages different?", scope: "nest", desc: "Same contact comparison for T cells inside the tumor nest.", main: "nest_macTouch", bySubset: true, control: ["nest_macTouch_bleed_mac_diff"], ctrlText: "Bleed: the macrophage marker inside touching T cells in the nest.", unit: "pct-pts" },
+    { title: "Do macrophages touching T cells look suppressive?", scope: "whole", desc: "Percentile-point difference in each macrophage marker: macrophages under 10 µm from a T cell minus macrophages 30 µm or more from any T cell. All macrophages in the image.",
+      main: "TmacTouch", unit: "pct-pts" },
+    { title: "Do macrophages touching T cells look suppressive?", scope: "nest", desc: "Same comparison for macrophages inside the tumor nest only.",
+      main: "nest_TmacTouch", unit: "pct-pts" },
+    { title: "Control: T cells touching stroma", scope: "whole", desc: "Same contact comparison for stromal cells. Effects here flag technical contact artifacts rather than biology.", main: "stromaTouch", control: ["stromaTouch_bleed_stroma_diff"], unit: "pct-pts", isControl: true },
+    { title: "Control: T cells touching stroma", scope: "nest", desc: "Same stromal control inside the tumor nest.", main: "nest_stromaTouch", bySubset: true, control: ["nest_stromaTouch_bleed_stroma_diff"], unit: "pct-pts", isControl: true },
+    { title: "T cells near the neutrophil subset (loaded data only)", scope: "whole", desc: "A neutrophil subset found in loaded data (for example LOX-1+). Public datasets have no such label; all neutrophils are shown as the closest reference.",
       main: ["T_near_neut_subset_log2"], also: "neut_subsetTouch", control: ["T_near_neut_log2"], ctrlText: "Reference: all neutrophils.", unit: "log2" },
   ];
+  const SCOPE_CHIP = { whole: '<span class="chip info">Whole image</span>', nest: '<span class="chip nest">Tumor nest</span>' };
   const STATE_NAME = { prolif: "dividing (Ki-67)", PD1: "PD-1", GZMB: "granzyme B", LAG3: "LAG-3", ICOS: "ICOS", apoptosis: "dying (cleaved PARP)" };
+  const MAC_NAME = { PDL1: "PD-L1", IDO1: "IDO1", CD163: "CD163", HLADR: "HLA-DR", ARG1: "arginase 1", M2: "M2-like score" };
+  const SUB_NAME = { CD8: "CD8 T cells", CD4: "CD4 T cells", Treg: "Tregs" };
+  const GRAD = ["0-5", "5-10", "10-20", "20-30", "30-50", "50-100", "100+"];
   function metricLabel(m) {
-    const t = m.match(/^(\w+?)Touch_(.+)_diff$/); if (t) return t[2].startsWith("bleed") ? "bleed (own marker in T cells)" : STATE_NAME[t[2]] || t[2];
+    const mac = m.match(/^(?:nest_)?TmacTouch_(.+)_diff$/); if (mac) return `${MAC_NAME[mac[1]] || mac[1]} on macrophages touching T cells`;
+    const t = m.match(/^(?:nest_)?(\w+?)Touch_(?:(CD8|CD4|Treg)_)?(.+)_diff$/);
+    if (t) { const st = t[3].startsWith("bleed") ? "bleed (own marker in T cells)" : STATE_NAME[t[3]] || t[3]; return t[2] ? `${SUB_NAME[t[2]]}: ${st}` : st; }
+    const p = m.match(/^nest_(T|B|CD8|CD4|Treg)_near_(neut|mac)_log2$/);
+    if (p) return `${{ T: "T cells", B: "B cells" }[p[1]] || SUB_NAME[p[1]]} near ${p[2] === "neut" ? "neutrophils" : "macrophages"}`;
     return { B_near_neut_log2: "B cells near neutrophils", T_near_neut_log2: "T cells near neutrophils", T_near_mac_log2: "T cells near macrophages", T_near_neut_subset_log2: "T cells near the subset" }[m] || m;
   }
   const quant = (a, q) => { const s = [...a].sort((x, y) => x - y); const p = (s.length - 1) * q, lo = Math.floor(p); return s.length ? s[lo] + (s[Math.min(lo + 1, s.length - 1)] - s[lo]) * (p - lo) : NaN; };
@@ -241,7 +329,7 @@
     for (const t of niceTicks(lo, hi, 4)) svg += `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="var(--line)" stroke-width="${t === 0 ? 1.6 : 0.9}"/>` +
       `<text x="${L - 6}" y="${y(t) + 4}" text-anchor="end" font-size="12" fill="var(--muted)" font-family="var(--f-data)">${t}</text>`;
     cols.forEach(([d, v], i) => {  // median line first, so the patient dots sit on top of it
-      const cx = L + cw * (i + 0.5), loaded = d.kind === "loaded";
+      const cx = L + cw * (i + 0.5), loaded = d.kind !== "public";
       const md = quant(v, 0.5);
       svg += `<line x1="${cx - cw * 0.32}" x2="${cx + cw * 0.32}" y1="${y(md)}" y2="${y(md)}" stroke="${loaded ? d.color : "var(--ref-strong)"}" stroke-width="2.6" stroke-opacity="0.75"/>`;
       v.forEach((val, j) => { const jit = ((j * 0.6180339887) % 1 - 0.5) * cw * 0.5;
@@ -254,46 +342,145 @@
   }
   function verdicts(m, sets) {  // each selected loaded dataset vs the selected public datasets pooled
     const pub = sets.filter((d) => d.kind === "public").flatMap((d) => vals(d.rows, m));
-    return sets.filter((d) => d.kind === "loaded").map((d) => {
+    const anyPublic = sets.some((d) => d.kind === "public");
+    return sets.filter((d) => d.kind !== "public").map((d) => {
       const v = vals(d.rows, m);
       let cls = "info", txt = "no data";
       if (v.length && v.length < 5) { cls = "warn"; txt = `only ${v.length} patient${v.length > 1 ? "s" : ""}`; }
-      else if (v.length && pub.length < 5) txt = "no public counterpart selected";
+      else if (v.length && pub.length < 5) txt = anyPublic ? "public reference not yet computed for this measure" : "no public counterpart selected";
       else if (v.length) { const md = quant(v, 0.5), lo = quant(pub, 0.1), hi = quant(pub, 0.9); [cls, txt] = md < lo ? ["fail", "below public range"] : md > hi ? ["fail", "above public range"] : ["pass", "within public range"]; }
       return `<span class="vd"><i class="swatch" style="background:${d.color}"></i>${esc(d.short)}: <span class="chip ${cls}">${esc(txt)}</span> <span class="num muted">median ${fmt(quant(v, 0.5))}</span></span>`;
     }).join("");
   }
-  const plotBlock = (m, sets) => `<div class="plot"><b>${esc(metricLabel(m))}</b>${strip(m, sets)}<div class="vds">${verdicts(m, sets)}</div></div>`;
+  // Pooled estimate under the sparse nest contact charts (recipe v3p.1): shown only for datasets that carry the pooled sums.
+  const POOL_MIN_CELLS = 50;   // same rule as the pooled sentences in findings.js
+  const POOLED = new WeakMap();   // rows array -> {test: pooled()}
+  function pooledFor(d, base) {
+    let c = POOLED.get(d.rows); if (!c) POOLED.set(d.rows, (c = {}));
+    return base in c ? c[base] : (c[base] = Findings.pooled(d.rows, base));
+  }
+  function pooledLine(m, sets) {
+    if (!m.endsWith("_diff") || !/^(nest_\w+Touch|TmacTouch|nest_TmacTouch)_/.test(m)) return "";
+    const base = m.slice(0, -5), parts = []; let est = false;
+    for (const d of sets) {
+      const p = pooledFor(d, base);
+      if (!p || p.n_near < 1) continue;
+      const cnt = `${p.n_near.toLocaleString("en-US")} cells, ${p.patients} patient${p.patients === 1 ? "" : "s"}`, dot = `<i class="swatch" style="background:${d.color}"></i>${esc(d.short)}`;
+      if (p.n_near < POOL_MIN_CELLS || p.patients < 5 || !Number.isFinite(p.diff)) { parts.push(`<span class="num">${dot}</span> <span class="muted">too few to pool (${cnt})</span>`); continue; }
+      const ci = Number.isFinite(p.lo) && Number.isFinite(p.hi) ? `, 95% CI ${fmt(p.lo, 1)} to ${fmt(p.hi, 1)}` : "";
+      est = true;
+      parts.push(`<span class="num">${dot} ${fmt(p.diff, 1)}</span>${ci} <span class="muted">(${cnt})</span>`);
+    }
+    return parts.length ? `<div class="hint pooled">Pooled across patients${est ? " (pct-pts)" : ""}: ${parts.join(" · ")}.${est ? " Pooled estimate, not per patient." : ""}</div>` : "";
+  }
+  const plotBlock = (m, sets) => `<div class="plot"><b>${esc(metricLabel(m))}</b>${strip(m, sets)}<div class="vds">${verdicts(m, sets)}</div>${pooledLine(m, sets)}</div>`;
+
+  // ---- tumor compartments: composition table and distance-gradient chart (recipe v3p) ----
+  const COMP_NOTE = "Tumor nest = tumor cells make up at least half of the cells within 50 µm. Chance level is computed by shuffling labels within each compartment. " +
+    "On whole sections the nest can include normal epithelium when the labels do not separate malignant cells. A nest proximity value can read as avoidance when the structure lies inside the nest; " +
+    "the distance gradient and contact tests are the more direct readouts there.";
+  const hasComp = (d) => d.rows.some((r) => "comp_nest_cells" in r);
+  const fmtPct = (v) => (v >= 10 ? String(Math.round(v)) : v.toFixed(1));
+  function compositionTable(d) {
+    const COLS = [["T", "T cells"], ["CD8", "CD8"], ["CD4", "CD4"], ["Treg", "Treg"], ["neut", "neutrophils"], ["mac", "macrophages"], ["B", "B cells"]];
+    const cols = COLS.filter(([k]) => d.rows.some((r) => `comp_nest_pct_${k}` in r || `comp_margin_pct_${k}` in r || `comp_far_pct_${k}` in r));
+    const head = `<tr><th>compartment</th><th class="num">cells</th>${cols.map(([, n]) => `<th class="num">${esc(n)}</th>`).join("")}</tr>`;
+    const body = [["nest", "Tumor nest"], ["margin", "Margin (within 100 µm of the nest)"], ["far", "Far tissue"]].map(([c, name]) => {
+      const cells = vals(d.rows, `comp_${c}_cells`);
+      const tds = cols.map(([k]) => { const v = vals(d.rows, `comp_${c}_pct_${k}`); return v.length ? `<td class="num"><b>${fmtPct(quant(v, 0.5))}</b> <span class="muted">${fmtPct(quant(v, 0.25))}–${fmtPct(quant(v, 0.75))}</span></td>` : '<td class="num muted">—</td>'; });
+      return `<tr><td>${name}</td><td class="num">${cells.length ? Math.round(quant(cells, 0.5)).toLocaleString() : "—"}</td>${tds.join("")}</tr>`;
+    }).join("");
+    return `<div class="comptable"><div class="comp-cap"><i class="swatch" style="background:${d.color}"></i><b>${esc(d.label)}</b> <span class="muted num">(${d.n} patients)</span></div>` +
+      `<div class="tablewrap"><table>${head}${body}</table></div></div>`;
+  }
+  function compartmentBlock(sets, top) {
+    const with_ = sets.filter(hasComp), without = sets.filter((d) => !hasComp(d));
+    if (top && !with_.length) return "";
+    if (!top && with_.length) return "";
+    return `<article class="claim"><div class="claim-head"><h3>Who is in the tumor? Immune composition by compartment</h3>${SCOPE_CHIP.nest}</div>` +
+      (with_.length ? `<p class="muted">Percent of the cells in each compartment (median across patients, then the middle half of patients). Each patient counts once.</p>${with_.map(compositionTable).join("")}` : "") +
+      (without.length ? `<ul class="nocomp">${without.map((d) => `<li><i class="swatch" style="background:${d.color}"></i><b>${esc(d.label)}</b>: ${d.kind === "loaded" ? "no tumor cells were found, so compartment results are not available." : d.kind === "results" ? "this results table has no compartment results." : "compartment results not yet computed for this dataset."}</li>`).join("")}</ul>` : "") +
+      `<p class="hint">${esc(COMP_NOTE)}</p></article>`;
+  }
+  const PUB_DASH = ["", "7 4", "2 4", "10 3 2 3"];
+  function gradSvg(src, sets) {
+    const pubSeen = [];
+    const series = sets.map((d) => {
+      const pts = GRAD.map((lab) => { const v = vals(d.rows, `grad_${src}_${lab}_log2`); return v.length >= 5 ? { med: quant(v, 0.5), lo: quant(v, 0.25), hi: quant(v, 0.75) } : null; });
+      if (d.kind === "public") pubSeen.push(d);
+      return { d, pts, dash: d.kind === "public" ? PUB_DASH[(pubSeen.length - 1) % PUB_DASH.length] : "" };
+    }).filter((s) => s.pts.some(Boolean));
+    if (!series.length) return "";
+    const all = series.flatMap((s) => s.pts.filter(Boolean).flatMap((p) => [p.lo, p.hi, p.med])).concat([0]);
+    let lo = Math.min(...all), hi = Math.max(...all); if (hi - lo < 1e-9) { lo -= 1; hi += 1; }
+    const pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
+    const W = 500, H = 320, L = 52, R = 78, T = 14, B = 70, x = (i) => L + ((W - L - R) * (i + 0.5)) / GRAD.length, y = (v) => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+    let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Nest T cells by distance to the nearest ${src === "neut" ? "neutrophil" : "macrophage"}">`;
+    for (const t of niceTicks(lo, hi, 5)) svg += `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="var(--line)" stroke-width="${t === 0 ? 1.8 : 0.9}"/>` +
+      `<text x="${L - 6}" y="${y(t) + 4}" text-anchor="end" font-size="12" fill="var(--muted)" font-family="var(--f-data)">${t}</text>`;
+    GRAD.forEach((lab, i) => { svg += `<text x="${x(i)}" y="${H - B + 20}" text-anchor="middle" font-size="12" fill="var(--muted)" font-family="var(--f-data)">${lab === "100+" ? "100+" : lab.replace("-", "–")}</text>`; });
+    svg += `<text x="${(L + W - R) / 2}" y="${H - 14}" text-anchor="middle" font-size="12" fill="var(--muted)" font-family="var(--f-body)">distance to the nearest ${src === "neut" ? "neutrophil" : "macrophage"} (µm)</text>` +
+      `<text transform="translate(14 ${(T + H - B) / 2}) rotate(-90)" text-anchor="middle" font-size="12" fill="var(--muted)" font-family="var(--f-body)">log2 vs chance</text>`;
+    for (const { d, pts, dash } of series) {
+      const loaded = d.kind !== "public", col = d.color, runs = []; let cur = [];
+      pts.forEach((p, i) => { if (p) cur.push([i, p]); else if (cur.length) { runs.push(cur); cur = []; } }); if (cur.length) runs.push(cur);
+      for (const r of runs) {
+        if (r.length > 1) svg += `<polygon points="${r.map(([i, p]) => `${x(i).toFixed(1)},${y(p.hi).toFixed(1)}`).concat(r.slice().reverse().map(([i, p]) => `${x(i).toFixed(1)},${y(p.lo).toFixed(1)}`)).join(" ")}" fill="${col}" fill-opacity="0.13"/>`;
+        svg += `<polyline points="${r.map(([i, p]) => `${x(i).toFixed(1)},${y(p.med).toFixed(1)}`).join(" ")}" fill="none" stroke="${loaded ? col : "var(--ref)"}" stroke-width="3" ${dash ? `stroke-dasharray="${dash}"` : ""} stroke-linejoin="round"/>`;
+        for (const [i, p] of r) svg += `<circle cx="${x(i).toFixed(1)}" cy="${y(p.med).toFixed(1)}" r="${loaded ? 5 : 4.5}" fill="${col}" stroke="var(--surface)" stroke-width="1.2"/>`;
+      }
+      const lastRun = runs[runs.length - 1], [li, lp] = lastRun[lastRun.length - 1], name = String(d.short);
+      svg += `<text x="${(x(li) + 9).toFixed(1)}" y="${(y(lp.med) + 4).toFixed(1)}" font-size="12" fill="${loaded ? col : "var(--ref-strong)"}" font-family="var(--f-body)">${esc(name.length > 12 ? name.slice(0, 11) + "…" : name)}</text>`;
+    }
+    return svg + "</svg>";
+  }
+  function gradientBlock(sets) {
+    const panels = [["neut", "neutrophil"], ["mac", "macrophage"]].map(([src, nm]) => ({ src, nm, svg: gradSvg(src, sets) })).filter((p) => p.svg);
+    if (!panels.length) return "";
+    return `<article class="claim"><div class="claim-head"><h3>How does the T-cell pattern change with distance?</h3>${SCOPE_CHIP.nest}</div>` +
+      `<p class="muted">For T cells inside the tumor nest: how many have their nearest neutrophil (or macrophage) in each distance band, compared with labels shuffled within each compartment. ` +
+      `Above 0 means more T cells at that distance than chance. The first four bands together are "within 30 µm". Lines are the median across patients; the band is the middle half of patients.</p>` +
+      `<div class="plots wide">${panels.map((p) => `<div class="plot"><b>Nest T cells by distance to the nearest ${p.nm}</b>${p.svg}</div>`).join("")}</div>` +
+      `<p class="hint">A band needs at least 5 patients. Association in tissue snapshots, not mechanism.</p></article>`;
+  }
   function renderClaims() {
     const sets = DS.filter((d) => selected.has(d.id) && d.status === "ready");
     $("#legend").innerHTML = sets.map((d) => `<span><i class="swatch" style="background:${d.color}"></i>${esc(d.label)} <span class="muted num">(${d.n})</span></span>`).join("");
     if (!sets.length) { $("#claims").innerHTML = `<p class="muted">Tick one or more datasets on the left to see them here.</p>`; return; }
     const keys = new Set(sets.flatMap((d) => d.rows.flatMap((r) => Object.keys(r))));
     const pick = (prefix) => [...keys].filter((k) => k.startsWith(prefix + "_") && k.endsWith("_diff") && !k.includes("bleed")).sort();
-    $("#claims").innerHTML = CLAIMS.map((c) => {
+    const subOf = (k, prefix) => { const m = k.slice(prefix.length + 1).match(/^(CD8|CD4|Treg)_/); return m ? m[1] : null; };
+    const html = [compartmentBlock(sets, true)];
+    for (const c of CLAIMS) {
+      if (c.gradient) { html.push(gradientBlock(sets)); continue; }
       let mains = Array.isArray(c.main) ? c.main : pick(c.main);
       if (c.also) mains = mains.concat(pick(c.also));
       mains = mains.filter((k) => keys.has(k));
-      if (!mains.length) return "";
+      let subs = [];
+      if (c.bySubset) { subs = ["CD8", "CD4", "Treg"].map((s) => [s, mains.filter((k) => subOf(k, c.main) === s)]).filter(([, ks]) => ks.length); mains = mains.filter((k) => !subOf(k, c.main)); }
+      if (!mains.length && !subs.length) continue;
       const ctrls = (c.control || []).filter((k) => keys.has(k));
-      return `<article class="claim${c.isControl ? " control" : ""}"><div class="claim-head"><h3>${esc(c.title)}</h3>${c.isControl ? '<span class="chip info">control</span>' : ""}</div>` +
-        `<p class="muted">${esc(c.desc)}</p><div class="plots">${mains.map((m) => plotBlock(m, sets)).join("")}</div>` +
-        (ctrls.length ? `<p class="hint">${esc(c.ctrlText || "")}</p><div class="plots">${ctrls.map((m) => plotBlock(m, sets)).join("")}</div>` : "") + "</article>";
-    }).join("");
+      html.push(`<article class="claim${c.isControl ? " control" : ""}"><div class="claim-head"><h3>${esc(c.title)}</h3><span class="row">${SCOPE_CHIP[c.scope]}${c.isControl ? '<span class="chip info">control</span>' : ""}</span></div>` +
+        `<p class="muted">${esc(c.desc)}</p>${mains.length ? `<div class="plots">${mains.map((m) => plotBlock(m, sets)).join("")}</div>` : ""}` +
+        subs.map(([s, ks]) => `<details><summary>${esc(SUB_NAME[s])} only (${ks.length} readouts)</summary><div class="plots">${ks.map((m) => plotBlock(m, sets)).join("")}</div></details>`).join("") +
+        (ctrls.length ? `<p class="hint">${esc(c.ctrlText || "")}</p><div class="plots">${ctrls.map((m) => plotBlock(m, sets)).join("")}</div>` : "") + "</article>");
+    }
+    html.push(compartmentBlock(sets, false));
+    $("#claims").innerHTML = html.join("");
   }
 
   // ---- details for loaded datasets: how it was read (read-only), checks, shareable summary ----
   const CONF = { high: "pass", medium: "info", low: "warn" };
   function renderDetails() {
-    const loaded = DS.filter((d) => d.kind === "loaded" && d.status !== "analysing" && (selected.has(d.id) || d.status === "failed"));
+    const loaded = DS.filter((d) => d.kind !== "public" && d.status !== "analysing" && (selected.has(d.id) || d.status === "failed"));
     $("#details").innerHTML = loaded.map((d) => {
       const report = (d.report || []).map((r) => `<tr><td>${esc(r.what)}</td><td>${esc(r.decision)}</td><td class="muted">${esc(r.evidence)}</td><td><span class="chip ${CONF[r.confidence] || "info"}">${esc(r.confidence)}</span></td></tr>`).join("");
       const labels = d.meta && d.meta.labels ? `<details><summary>Cell-type labels (${d.meta.labels.length})</summary><div class="tablewrap"><table><tr><th>label</th><th class="num">cells</th><th>read as</th></tr>` +
-        d.meta.labels.map(([l, n, r]) => `<tr><td class="mono">${esc(l)}</td><td class="num">${n.toLocaleString()}</td><td>${esc(r)}</td></tr>`).join("") + "</table></div></details>" : "";
+        d.meta.labels.map(([l, n, r]) => `<tr><td class="mono">${esc(l)}</td><td class="num">${n.toLocaleString()}</td><td>${esc(r.startsWith("T:") ? `T cell (${r.slice(2)})` : r)}</td></tr>`).join("") + "</table></div></details>" : "";
       const checks = (d.checks || []).map(([n, s, det, fix]) => `<tr><td><span class="chip ${s}">${s === "fail" ? "failed" : s === "warn" ? "note" : "ok"}</span></td><td>${esc(n)}</td><td>${esc(det)}</td><td class="muted">${esc(fix || "")}</td></tr>`).join("");
       const fails = d.status === "failed" ? `<div class="failbox"><h4>Why this dataset couldn't be analysed</h4><ul>${(d.fails || []).map((f) => `<li><b>${esc(f.title)}</b>${f.why ? `<br>${esc(f.why)}` : ""}${f.fix ? `<br><span class="muted">What to do: ${esc(f.fix)}</span>` : ""}</li>`).join("")}</ul></div>` : "";
-      const share = d.status === "ready" ? `<details><summary>Share a summary (optional)</summary><p class="hint">Per-patient effect sizes only, with each patient replaced by a random code. No cell-level data. Nothing is sent anywhere.</p>` +
-        `<div class="row"><button type="button" data-copy="${esc(d.id)}">Copy summary</button>${window.__HOSTED ? "" : `<button type="button" data-dl="${esc(d.id)}">Download summary.csv</button>`}<span class="muted" id="cs-${esc(d.id)}"></span></div>` +
+      const share = d.status === "ready" && d.kind === "loaded" && window.__HOSTED ? `<p class="hint">Summary export is available in the downloadable page (docs/index.html) and the Python kit.</p>` : d.status === "ready" && d.kind === "loaded" ? `<details><summary>Share a summary (optional)</summary><p class="hint">Per-patient effect sizes only, with each patient replaced by a random code. No cell-level data. Nothing is sent anywhere.</p>` +
+        `<div class="row"><button type="button" data-copy="${esc(d.id)}">Copy summary</button><button type="button" data-dl="${esc(d.id)}">Download summary.csv</button><span class="muted" id="cs-${esc(d.id)}"></span></div>` +
         `<textarea class="summary" readonly aria-label="Summary CSV" id="sum-${esc(d.id)}">${esc(d.summary || "")}</textarea>` +
         `<details><summary>Key: code → patient ID in your file (keep private)</summary><textarea class="summary" readonly aria-label="Patient key">${esc(d.key || "")}</textarea></details></details>` : "";
       return `<section class="detail"><h3><i class="swatch" style="background:${d.color}"></i>${esc(d.label)}</h3>${fails}` +
@@ -322,6 +509,6 @@
   });
 
   function render() { renderPanel(); renderClaims(); renderDetails(); }
-  $("#recipe-version").textContent = REF.recipe;
+  $("#recipe-version").textContent = REF.recipe;  // the public reference is measured with the same recipe as the page
   render();
 })();

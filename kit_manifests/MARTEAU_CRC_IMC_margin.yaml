@@ -1,0 +1,54 @@
+dataset: MARTEAU_CRC_IMC_margin
+modality: protein  # reviewed 2026-10-22 (cloud) from the column list and label counts in docs/handoff/local-report-3.md
+path: data/marteau_crc/IMC/IMC_data_aggregated_crc_atlas.csv
+filters: {tissue: margin}   # the deposit annotates each 1000x1000 µm region as intratumoral or margin; one dataset per region type
+columns: {patient: patient, field: Image_id, x: Location_Center_X, y: Location_Center_Y, type: phenotype}
+pixel_size_um: 1.0   # coordinates are µm: per-image span 996 = the paper's 1000 µm regions; median nearest-cell distance 4.9 µm (dense CellProfiler segmentation)
+# Marker values are pre-normalised 0-1 and 78-99% exactly zero, so within-image percentiles are coarse (mostly ties at 0).
+roles:  # raw label -> T | T:CD8 | T:CD4 | T:Treg | neut | mac | B | stroma | tumor | other | drop
+  Other_cancercells: tumor
+  Ki67+cancercells: tumor
+  Caspase+cancercells: tumor
+  Caspase+Ki67+cancercells: tumor
+  Fibroblasts: stroma
+  Vessels: other
+  Undefined: drop
+  Tcells_undefined: T          # CD3+ without a subset call
+  CD4+Tcells: 'T:CD4'
+  CD103+CD4+Tcells: 'T:CD4'
+  Tregs: 'T:Treg'
+  CD8+Tcells: 'T:CD8'
+  CD103+CD8+Tcells: 'T:CD8'
+  CD103+Tcells: T
+  GD-Tcells: T                 # gamma-delta T cells, subset unknown
+  Other_macrophages: mac
+  CD204+macrophages: mac
+  CD163+CD204+macrophages: mac
+  CD204+HLADR+macrophages: mac
+  CD163+CD204+HLADR+macrophages: mac
+  CD11c+macrophages: mac
+  HLADR+macrophages: mac
+  Other_monocytes: other       # monocytes kept apart from macrophages, as in the CODEX manifest
+  CD204+monocytes: other
+  CD163+CD204+monocytes: other
+  Other_myeloid: other
+  Neutrophils: neut            # CD15-based
+  PlasmaBcells: B
+  CD20+Bcells: B
+  CD19+cells: B
+  CD56-ILC: other
+  CD56+ILC: other
+  Dendritic_cells: other
+  Other_immune: other
+states:
+  prolif: Ki.67_high_dim_
+  PD1: PD.1_high_dim_
+  GZMB: Granzyme.B_high_dim_
+  ICOS: ICOS_high_dim_
+  apoptosis: cleavedcaspase_high_dim_   # cleaved caspase-3: apoptosis, same caveat as cleaved PARP
+  # LAG3: not in the panel
+bleed:
+  neut: CD15_high_dim_
+  mac: CD68_high_dim_
+  # stroma: Vimentin is the only stromal marker and T cells express it (failed the sanity check in CODEX), so no stroma bleed column
+mac_states: {PDL1: PDL1_high_dim_, IDO1: IDO_high_dim_, CD163: CD163_high_dim_, HLADR: HLA.DR_high_dim_, M2: CD204_high_dim_}

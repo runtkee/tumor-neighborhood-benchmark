@@ -7,7 +7,7 @@ const CHROME = process.env.CHROME || "/Applications/Google Chrome.app/Contents/M
 const page = path.resolve(process.argv[2]);
 const uploads = process.argv.slice(3).map((p) => path.resolve(p));
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tnb-"));
-const chrome = spawn(CHROME, ["--headless=new", "--disable-gpu", "--no-first-run", `--user-data-dir=${dir}`, "--remote-debugging-port=0", "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
+const chrome = spawn(CHROME, ["--headless=new", "--disable-gpu", "--no-first-run", ...(process.getuid && process.getuid() === 0 ? ["--no-sandbox"] : []), `--user-data-dir=${dir}`, "--remote-debugging-port=0", "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
 let buf = "";
 chrome.stderr.on("data", async (d) => {
   buf += d; const m = buf.match(/DevTools listening on (ws:\/\/\S+)/); if (!m || chrome.started) return; chrome.started = true;
@@ -45,9 +45,12 @@ chrome.stderr.on("data", async (d) => {
         await report("after entering 0.5 µm per pixel");
       } else await report("added " + path.basename(f));
     }
+    // machine-readable end state: one line per dataset in the list, and the rendered details
+    const fin = await evalJS(`[...document.querySelectorAll('#dsets .dset')].map(li=>({name:(li.querySelector('.dname')||{}).innerText||'',meta:(li.querySelector('.dmeta')||{}).innerText||'',chips:[...li.querySelectorAll('.chip')].map(c=>c.innerText).join('|'),findings:li.querySelectorAll('.finds li').length,px:!!li.querySelector('form.pxform')})).concat([{details:[...document.querySelectorAll('#details .detail')].map(d=>d.innerText.replace(/\\s+/g,' ')),privacy:document.querySelector('.privacy').innerText,plots:document.querySelectorAll('#claims svg').length}])`);
+    console.log("FINAL_STATE " + JSON.stringify(fin));
     const okExample = okStart;
     console.log("\nconsole errors:", errors.length ? errors : "none");
-    if (process.env.SHOT) { await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1800, deviceScaleFactor: 1, mobile: false }); await new Promise((r) => setTimeout(r, 800)); const s = await send("Page.captureScreenshot", { format: "png" }); fs.writeFileSync(process.env.SHOT, Buffer.from(s.data, "base64")); }
+    if (process.env.SHOT) { await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: Number(process.env.SHOT_H) || 1800, deviceScaleFactor: 1, mobile: false }); await new Promise((r) => setTimeout(r, 800)); const s = await send("Page.captureScreenshot", { format: "png" }); fs.writeFileSync(process.env.SHOT, Buffer.from(s.data, "base64")); }
     ws.close(); chrome.kill(); setTimeout(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) {} }, 500);
     process.exit(okExample && !errors.length ? 0 : 1);
   };

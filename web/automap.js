@@ -20,10 +20,13 @@
     SMA: /(?:^|[^a-z])(?:a|α|alpha)?-?sma\b|smooth muscle actin|acta2/i, PDGFRB: /pdgfr-?b|pdgfrβ/i, FAP: /\bfap\b/i,
     KI67: /ki-?67|mki67/i, PD1: /\bpd-?1\b|pdcd1\b|\bcd279\b/i, GZMB: /granzyme.?b|gzmb|grzb/i, LAG3: /lag-?3|\bcd223\b/i, ICOS: /\bicos\b|\bcd278\b/i,
     CPARP: /cleaved.?parp|\bc-?parp\b|cleaved.?caspase|caspase.?3/i,
+    PDL1: /pd-?l-?1(?![0-9])|\bcd274\b|\bb7-?h1\b/i, IDO1: /\bido-?1\b/i, HLADR: /hla[-_ ]?dr/i,   // macrophage-state markers
   };
   const LINEAGE = { T: ["CD3", "CD8", "CD4", "CD2", "CD5", "CD7", "FOXP3"], B: ["CD20", "CD19", "CD79A", "CD138"], neut: ["CD66B", "MPO", "CD15"],
     mac: ["CD68", "CD163", "CD206"], tumor: ["PANCK", "EPCAM", "ECAD", "AMACR", "SOX10", "MELANA", "CDX2", "TTF1"], stroma: ["SMA", "PDGFRB", "FAP"] };
   const STATE_MARKER = { prolif: "KI67", PD1: "PD1", GZMB: "GZMB", LAG3: "LAG3", ICOS: "ICOS", apoptosis: "CPARP" };
+  const MAC_STATE_MARKER = { PDL1: "PDL1", IDO1: "IDO1", CD163: "CD163", HLADR: "HLADR" };   // recipe v3p: macrophage state next to T cells
+  const MAC_STATE_NAME = { PDL1: "PD-L1", IDO1: "IDO1", CD163: "CD163", HLADR: "HLA-DR" };
   const BLEED_MARKERS = { neut: ["CD66B", "MPO", "CD15"], mac: ["CD68", "CD163"], stroma: ["SMA", "PDGFRB"] };
   const markersIn = (text) => Object.keys(M).filter((k) => M[k].test(text));
 
@@ -53,9 +56,20 @@
     if (lin.size > 1) return ["other", "markers of several cell types"];
     return ["other", "not recognised"];
   }
+  // T-cell subset named in a label: Treg / FOXP3 first, then CD8, then CD4; a label naming both CD4 and CD8 stays plain T
+  function subsetOf(label) {
+    const t = String(label);
+    if (/treg|foxp3/i.test(t)) return "Treg";
+    const c8 = /cd8(?![0-9])/i.test(t), c4 = /cd4(?![0-9])/i.test(t);
+    return c8 && c4 ? null : c8 ? "CD8" : c4 ? "CD4" : null;
+  }
   function mapLabels(counts) {
     const roles = {}, detail = [];
-    for (const [lab, n] of counts) { const [r, how] = labelRole(lab); roles[lab] = r; detail.push([lab, n, r, how]); }
+    for (const [lab, n] of counts) {
+      let [r, how] = labelRole(lab);
+      if (r === "T") { const sub = subsetOf(lab); if (sub) { r = "T:" + sub; how += "; subset from the label"; } }
+      roles[lab] = r; detail.push([lab, n, r, how]);
+    }
     return { roles, detail };
   }
 
@@ -95,7 +109,7 @@
       for (const r of s.rows.slice(0, per)) { s0.rows.push(r); s0.files.push(s.name); }
     }
     const P = profile(s0);
-    const cfg = { dataset: "", modality: "protein", columns: {}, pixel_size_um: 1, roles: {}, states: {}, bleed: {}, extra_roles: {}, min_cells_per_field: 0 };
+    const cfg = { dataset: "", modality: "protein", columns: {}, pixel_size_um: 1, roles: {}, states: {}, bleed: {}, mac_states: {}, extra_roles: {}, min_cells_per_field: 0 };
     const multi = samples.length > 1;
 
     // 1. positions: numeric, spread out, not a running index; named like coordinates; boxes if min/max pairs exist
@@ -215,9 +229,15 @@
         if (ms.includes("LOX1")) (byRole.neut_subset ||= []).push(["LOX1", c.name]);
       }
       const order = ["neut_subset", "T", "B", "mac", "neut", "tumor", "stroma"], rules = [];
-      for (const role of order) for (const [k, col] of byRole[role] || []) {
-        if (role === "neut_subset") { const n = (byRole.neut || [])[0]; if (n) rules.push({ role, positive: [col, n[1]], negative: [], why: `LOX-1+ and ${n[0]}+` }); }
-        else rules.push({ role, positive: [col], negative: [], why: `${k}+` });
+      for (const role of order) {
+        if (role === "T") for (const [sub, k] of [["Treg", "FOXP3"], ["CD8", "CD8"], ["CD4", "CD4"]]) {   // subset rules first, in this fixed order
+          const e = (byRole.T || []).find((x) => x[0] === k);
+          if (e) rules.push({ role: "T:" + sub, positive: [e[1]], negative: [], why: `${k}+` });
+        }
+        for (const [k, col] of byRole[role] || []) {
+          if (role === "neut_subset") { const n = (byRole.neut || [])[0]; if (n) rules.push({ role, positive: [col, n[1]], negative: [], why: `LOX-1+ and ${n[0]}+` }); }
+          else rules.push({ role, positive: [col], negative: [], why: `${k}+` });
+        }
       }
       if (rules.length && rules.some((r) => r.role === "T")) {
         cfg.columns.type = null; cfg.phenotype_rules = rules.map(({ why, ...r }) => r);
@@ -238,8 +258,8 @@
       if (/mean|average|avg/.test(t)) s += 2; if (/median/.test(t)) s += 1;
       if (/\b(min|max|std|stdev|sd|total|sum|integrated|positive|classification|area|%|percent|count|threshold)\b/.test(t)) s -= 3;
       if (key === "KI67" && /nucle/.test(t)) s += 1;
-      if (["PD1", "LAG3", "ICOS", "CD66B", "CD15", "CD68", "CD163"].includes(key) && /membran|cell\b|whole/.test(t)) s += 1;
-      if (["GZMB", "MPO"].includes(key) && /cyto/.test(t)) s += 1;
+      if (["PD1", "LAG3", "ICOS", "CD66B", "CD15", "CD68", "CD163", "PDL1", "HLADR"].includes(key) && /membran|cell\b|whole/.test(t)) s += 1;
+      if (["GZMB", "MPO", "IDO1"].includes(key) && /cyto/.test(t)) s += 1;
       return s;
     };
     const markerCol = (key) => {
@@ -253,6 +273,9 @@
     const found = [];
     for (const [st, key] of Object.entries(STATE_MARKER)) { const c = markerCol(key); if (c) { cfg.states[st] = c[0]; found.push(`${st} = "${c[0]}"${c[1] === "yes/no flag" ? " (yes/no flag, coarse)" : ""}`); } }
     say("T-cell readouts", found.length ? found.join("; ") : "none found", found.length ? "columns named after the marker; mean intensity preferred" : "no Ki-67, PD-1, granzyme B, LAG-3, ICOS or cleaved-PARP columns", found.length ? "high" : "medium");
+    const mf = [];
+    for (const [st, key] of Object.entries(MAC_STATE_MARKER)) { const c = markerCol(key); if (c) { cfg.mac_states[st] = c[0]; mf.push(`${MAC_STATE_NAME[st]} = "${c[0]}"${c[1] === "yes/no flag" ? " (yes/no flag, coarse)" : ""}`); } }
+    say("Macrophage markers", mf.length ? mf.join("; ") : "none found", mf.length ? "columns named after PD-L1, IDO1, CD163 or HLA-DR; compared between macrophages touching T cells and macrophages far from them" : "no PD-L1, IDO1, CD163 or HLA-DR columns, so macrophage state next to T cells is not measured", mf.length ? "high" : "medium");
     const bl = [];
     for (const [role, keys] of Object.entries(BLEED_MARKERS)) for (const k of keys) { const c = markerCol(k); if (c && c[1] === "intensity") { cfg.bleed[role] = c[0]; bl.push(`${role} = "${c[0]}"`); break; } }
     say("Each cell type's own marker (bleed check)", bl.length ? bl.join("; ") : "none found", "used to measure signal bleeding into touching T cells", bl.length ? "high" : "medium");
@@ -267,11 +290,22 @@
       const { roles, detail } = mapLabels(labelCounts);
       cfg.roles = roles;
       const total = detail.reduce((a, d) => a + d[1], 0), by = {};
-      for (const [, n, r] of detail) by[r] = (by[r] || 0) + n;
+      for (const [, n, r] of detail) { const b = r.split(":")[0]; by[b] = (by[b] || 0) + n; }
       say("Cell-type labels", `${detail.length} labels → ${Object.entries(by).sort((a, b) => b[1] - a[1]).map(([r, n]) => `${r} ${Math.round((100 * n) / total)}%`).join(", ")}`, "matched by cell-type words and marker names (e.g. CD3+CD8+ → T)");
       cfg._labels = detail;
       if (roles && Object.values(roles).includes("neut_subset")) cfg.extra_roles = { neut_subset: "neut" };
+      const bySub = {}; for (const [lab, , r] of detail) if (r.startsWith("T:")) (bySub[r.slice(2)] ||= []).push(lab);
+      const subTxt = ["CD8", "CD4", "Treg"].filter((k) => bySub[k]).map((k) => `${k}: ${bySub[k].slice(0, 2).map((l) => `"${l}"`).join(", ")}${bySub[k].length > 2 ? ` +${bySub[k].length - 2}` : ""}`);
+      say("T-cell subsets", subTxt.length ? subTxt.join("; ") : "none found", subTxt.length ? "read from the label text (CD8, CD4, Treg / FOXP3); T cells whose label names no subset, or both CD4 and CD8, stay in the plain T group" : "no T-cell label names CD8, CD4 or Treg, so only all-T results are shown", subTxt.length ? "high" : "medium");
     } else if (cfg.phenotype_rules && cfg.phenotype_rules.some((r) => r.role === "neut_subset")) cfg.extra_roles = { neut_subset: "neut" };
+    if (!cfg.columns.type && cfg.phenotype_rules) {
+      const sr = cfg.phenotype_rules.filter((r) => r.role.startsWith("T:")).map((r) => r.role.slice(2));
+      say("T-cell subsets", sr.length ? sr.join(", ") : "none found", sr.length ? "from yes/no columns named CD8, CD4 or FOXP3, applied in the order Treg, CD8, CD4" : "no CD8, CD4 or FOXP3 yes/no column, so only all-T results are shown", sr.length ? "high" : "medium");
+    }
+    const hasTumor = cfg.columns.type ? Object.values(cfg.roles || {}).includes("tumor") : (cfg.phenotype_rules || []).some((r) => r.role === "tumor");
+    say("Tumor compartments", hasTumor ? "tumor nest, margin and far tissue, computed from tumor-cell density" : "whole image only", hasTumor
+      ? "nest = tumor cells are at least half of the cells within 50 µm; margin = within 100 µm of a nest cell; no annotation needed. On whole sections the nest can include normal epithelium"
+      : "no label or marker maps to tumor cells, so nest results are not computed", hasTumor ? "medium" : "medium");
     if (cfg.extra_roles.neut_subset && cfg.bleed.neut) cfg.bleed.neut_subset = cfg.bleed.neut;
     if (!cfg._unitKnown) {
       if (!(spacingAt1 > 0 && Number.isFinite(spacingAt1))) {
@@ -312,6 +346,81 @@
     })();
   }
 
-  const api = { autoMap, finishConfig, mapLabels, labelRole, profile, sampleRows, MARKERS: M };
+  // ---- results tables written by the Python kit (patients_full.csv, share_summary.csv, kit/reference/*.csv) ----
+  // These hold one row per patient with finished numbers. They are shown as datasets without computing anything.
+  // Detection: the header has dataset, patient and recipe plus at least one _log2 or _diff column, and the file is small
+  // (at most KIT_MAX_ROWS rows). A cell table with a patient column has no recipe/dataset/_log2 columns, so it is never matched.
+  const KIT_MAX_ROWS = 5000, KIT_MAX_BYTES = 64 << 20;
+  const KIT_KEEP = /(_log2|_diff|_n|_near_sum|_far_n|_far_sum)$|^comp_|^grad_/;
+  const KIT_FAMILIES = [
+    ["whole image", (c) => /^(T_near_(neut|mac)|B_near_neut)_log2$/.test(c) || /^(neut|mac|stroma)Touch_.+_diff$/.test(c)],
+    ["tumor nest", (c) => /^nest_.+_(log2|diff)$/.test(c)],
+    ["distance gradient", (c) => /^grad_.+_log2$/.test(c)],
+    ["macrophage markers", (c) => /^(nest_)?TmacTouch_.+_diff$/.test(c)],
+    ["composition", (c) => /^comp_.+/.test(c)],
+  ];
+  function isKitHeader(header, size) {
+    const h = header.map(lc);
+    return (size === undefined || size <= KIT_MAX_BYTES) && h.includes("dataset") && h.includes("patient") && h.includes("recipe") && h.some((c) => /(_log2|_diff)$/.test(c));
+  }
+  // text of one file -> null (not a results table: wrong header, or too many rows) or { datasets: [{id, rows, report, checks}], ... }
+  function readKitResults(text, name, version) {
+    text = R.prepText(text);
+    const delim = R.detectDelim(text);
+    let H = null, ix = null, keep = [], over = false, nrows = 0, blank = 0;
+    const by = new Map(), base = String(name || "results").replace(/\.[^.]+$/, "");
+    R.eachCSVRow(text, (r) => {
+      if (!H) {
+        H = r.map(clean);
+        if (!isKitHeader(H)) { over = true; return; }
+        const pos = (n) => H.findIndex((c) => lc(c) === n);
+        ix = { dataset: pos("dataset"), patient: pos("patient"), recipe: pos("recipe") };
+        const seen = new Set(["dataset", "patient", "recipe"]);
+        H.forEach((c, i) => { if (!seen.has(lc(c)) && KIT_KEEP.test(c) && !seen.has(c)) { seen.add(c); keep.push([c, i]); } });
+        return;
+      }
+      if (over) return;
+      if (++nrows > KIT_MAX_ROWS) { over = true; return; }
+      const cell = (i) => (r[i] === undefined ? "" : String(r[i]).trim());
+      const patient = cell(ix.patient);
+      if (!patient) { blank++; return; }
+      const ds = cell(ix.dataset) || base;
+      let e = by.get(ds); if (!e) by.set(ds, (e = { id: ds, rows: [], recipes: new Set() }));
+      const rec = cell(ix.recipe); if (rec) e.recipes.add(rec);
+      const row = { dataset: ds, patient };
+      for (const [c, i] of keep) row[c] = R.num(cell(i));
+      e.rows.push(row);
+    }, delim);
+    if (over || !H) return null;
+    const cols = keep.map(([c]) => c);
+    const count = (re) => cols.filter((c) => re.test(c)).length;
+    const nResult = count(/(_log2|_diff)$/);
+    const used = [`dataset, patient, recipe`, `${nResult} result columns (_log2, _diff)`, ...(cols.length - nResult ? [`${cols.length - nResult} columns with arm sizes, sums, composition and gradient values`] : [])];
+    const fams = KIT_FAMILIES.map(([n, f]) => [n, cols.filter(f).length]);
+    const datasets = [...by.values()].map((e) => {
+      const ids = e.rows.map((r) => r.patient), uniq = new Set(ids).size, dup = ids.length - uniq;
+      const recipes = [...e.recipes];
+      const report = [
+        { what: "File type", decision: "Results table from the Python kit", evidence: `header has dataset, patient and recipe, plus ${nResult} columns ending in _log2 or _diff; ${nrows} rows (a cell table would have thousands to millions)`, confidence: "high" },
+        { what: "Columns used", decision: used.join("; "), evidence: `${H.length - 3 - cols.length} other columns in the file were ignored`, confidence: "high" },
+        { what: "Dataset", decision: e.id, evidence: `taken from the dataset column; ${e.rows.length} row${e.rows.length === 1 ? "" : "s"} (one per patient) belong to it${by.size > 1 ? `; this file holds ${by.size} datasets, each is listed separately` : ""}`, confidence: "high" },
+        { what: "Computation", decision: "None: the numbers are shown exactly as in the file", evidence: "no cell data was read; empty cells are treated as missing values", confidence: "high" },
+      ];
+      const checks = [];
+      if (!recipes.length) checks.push(["recipe version", "warn", "The recipe column is empty.", `Results from another recipe version may not be comparable. This page uses ${version}.`]);
+      else if (recipes.length === 1 && recipes[0] === version) checks.push(["recipe version", "pass", `${version}, the same as this page.`, ""]);
+      else checks.push(["recipe version", "warn", `The file says ${recipes.join(", ")}; this page uses ${version}.`, "Results from another recipe version are shown but may not be comparable."]);
+      checks.push(["patients", uniq >= 5 && !dup ? "pass" : "warn", `${uniq} patient${uniq === 1 ? "" : "s"}` + (dup ? `; ${dup} row${dup === 1 ? " repeats" : "s repeat"} a patient already listed, and each row is plotted as one patient` : "") + (blank ? `; ${blank} row${blank === 1 ? "" : "s"} without a patient ID in the file ${blank === 1 ? "was" : "were"} skipped` : ""),
+        uniq < 5 ? "With fewer than 5 patients the charts are shown but summary findings are not." : dup ? "Check that the file holds one run, not several runs stacked." : ""]);
+      const have = fams.filter(([, n]) => n).map(([n]) => n), lack = fams.filter(([, n]) => !n).map(([n]) => n);
+      checks.push(["measures present", have.some((n) => n !== "composition") ? "pass" : "warn", `${have.length ? have.join(", ") : "none"}` + (lack.length ? `. Not in this file: ${lack.join(", ")}` : ""),
+        have.some((n) => n !== "composition") ? "" : "None of the measures the page charts were found, so nothing will be drawn."]);
+      checks.push(["contents", "pass", "This file holds per-patient summary numbers only: no cell positions, no cell-level data.", ""]);
+      return { id: e.id, rows: e.rows, report, checks };
+    });
+    return { datasets, nrows, blank };
+  }
+
+  const api = { isKitHeader, readKitResults, KIT_MAX_ROWS, KIT_MAX_BYTES, autoMap, finishConfig, mapLabels, labelRole, subsetOf, profile, sampleRows, MARKERS: M };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.AutoMap = api;
 })(typeof self !== "undefined" ? self : this);
