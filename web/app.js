@@ -14,6 +14,9 @@
     XENIUM10X_LUNG_prime5k: "--ds-10x-lung",
     MARTEAU_XENIUM_core: "--ds-mxen-1", MARTEAU_XENIUM_margin: "--ds-mxen-2", MARTEAU_XENIUM_normal: "--ds-mxen-3",
   };
+  // Public datasets too small for summary findings (under 5 patients) go last, in the list and in the charts.
+  const tooSmall = (d) => d.kind === "public" && d.n < 5;
+  const ordered = (ds) => ds.filter((d) => !tooSmall(d)).concat(ds.filter(tooSmall));
   const HIGHLIGHT = new Set(["down", "up", "change"]);  // findings shown on the card; the rest sit under "more"
   const openMore = new Set();
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -275,8 +278,7 @@
   const REF_NOTE = refNote(REF.datasets);
   function renderPanel() {
     // Public datasets too small for summary findings (under 5 patients) go to the bottom, below loaded data.
-    const tooSmall = (d) => d.kind === "public" && d.n < 5;
-    $("#dsets").innerHTML = REF_NOTE + DS.filter((d) => !tooSmall(d)).concat(DS.filter(tooSmall)).map((d) => {
+    $("#dsets").innerHTML = REF_NOTE + ordered(DS).map((d) => {
       const [cls, txt] = STATUS_CHIP[d.status];
       const box = `<input type="checkbox" id="sel-${esc(d.id)}" data-id="${esc(d.id)}"${selected.has(d.id) ? " checked" : ""}${d.status !== "ready" ? " disabled" : ""}>`;
       let body = "";
@@ -445,8 +447,18 @@
       });
       return `<tr><td>${name}</td><td class="num">${cells.length ? Math.round(quant(cells, 0.5)).toLocaleString("en-US") : "—"}</td>${tds.join("")}</tr>`;
     }).join("");
+    // Share of T cells that carry a subset label (all compartments, all patients): under half means the subset columns undercount.
+    let tAll = 0, tSub = 0;
+    for (const r of d.rows) for (const c of ["nest", "margin", "far"]) {
+      const n = r[`comp_${c}_cells`], t = r[`comp_${c}_pct_T`];
+      if (!(n > 0) || !Number.isFinite(t)) continue;
+      tAll += (t * n) / 100;
+      for (const k of ["CD8", "CD4", "Treg"]) if (Number.isFinite(r[`comp_${c}_pct_${k}`])) tSub += (r[`comp_${c}_pct_${k}`] * n) / 100;
+    }
+    const subNote = tAll > 0 && tSub / tAll < 0.5 && cols.some(([k]) => k === "CD8" || k === "CD4" || k === "Treg")
+      ? `<p class="hint subnote">Only ${Math.round((100 * tSub) / tAll)}% of T cells here carry a CD8, CD4 or Treg label; the rest have no subset call, so the CD8, CD4 and Treg columns undercount.</p>` : "";
     return `<div class="comptable"><div class="comp-cap"><i class="swatch" style="background:${d.color}"></i><b>${esc(d.label)}</b> <span class="muted num">(${d.n} patients)</span></div>` +
-      `<div class="tablewrap"><table>${head}${body}</table></div></div>`;
+      `<div class="tablewrap"><table>${head}${body}</table></div>${subNote}</div>`;
   }
   function compartmentBlock(sets, top) {
     const with_ = sets.filter(hasComp), without = sets.filter((d) => !hasComp(d));
@@ -499,7 +511,7 @@
       `<p class="hint">A band needs at least 5 patients. Association in tissue snapshots, not mechanism.</p></article>`;
   }
   function renderClaims() {
-    const sets = DS.filter((d) => selected.has(d.id) && d.status === "ready");
+    const sets = ordered(DS).filter((d) => selected.has(d.id) && d.status === "ready");
     $("#legend").innerHTML = sets.map((d) => `<span><i class="swatch" style="background:${d.color}"></i>${esc(d.label)} <span class="muted num">(${d.n})</span></span>`).join("");
     if (!sets.length) { $("#claims").innerHTML = `<p class="muted">Tick one or more datasets on the left to see them here.</p>`; return; }
     const keys = new Set(sets.flatMap((d) => d.rows.flatMap((r) => Object.keys(r))));
