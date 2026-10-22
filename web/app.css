@@ -8,7 +8,13 @@
   --accent: #b0267a;          /* "your data" (fluorophore magenta) */
   --accent-soft: #f6e3ee;
   --ref: #1f8a4c;             /* public reference dots (green) */
-  --c2: #2563d6; --c3: #b26a00; --c4: #7a3fc4;   /* further loaded datasets */
+  /* One hue per study, one shade per dataset inside it; loaded data stays magenta. */
+  --ds-immucan: #008300; --ds-codex: #2a78d6;
+  --ds-spatch-1: #a86f00; --ds-spatch-2: #eda100; --ds-spatch-3: #f5c451; --ds-spatch-4: #7a5200;
+  --ds-marteau-1: #4a3aa7; --ds-marteau-2: #8f82e6;
+  --ds-cervilla-1: #b8461a; --ds-cervilla-2: #eb6834; --ds-cervilla-3: #f39a72; --ds-cervilla-4: #8a3412;
+  --ds-mxen-1: #0b7a55; --ds-mxen-2: #1baf7a; --ds-mxen-3: #6fd3ac;
+  --c2: #e87ba4; --c3: #7d1757; --c4: #d55181;   /* further loaded datasets (magenta shades) */
   --ref-strong: #0e4d29;     /* median line of public datasets */
   --good: #1e7a46; --good-bg: #e2f3e8;
   --warn: #9a5b00; --warn-bg: #fbefd9;
@@ -22,7 +28,12 @@
     --bg: #12151a; --surface: #1a1f26; --ink: #e7ebf0; --muted: #9aa4b2; --line: #2b323c;
     --accent: #f06bb5; --accent-soft: #3a1f30; --ref: #4cc77f; --ref-strong: #b6f0cd;
     --good: #5fcf8b; --good-bg: #173324; --warn: #f0b552; --warn-bg: #3a2c12; --bad: #ff7a70; --bad-bg: #3d1a18;
-    --c2: #6fa2ff; --c3: #f0a83c; --c4: #b88cff;
+    --ds-immucan: #2fa52f; --ds-codex: #3987e5;
+    --ds-spatch-1: #c98500; --ds-spatch-2: #eda100; --ds-spatch-3: #f5c451; --ds-spatch-4: #a86f00;
+    --ds-marteau-1: #6c5ce0; --ds-marteau-2: #a69cf0;
+    --ds-cervilla-1: #d95926; --ds-cervilla-2: #f0855a; --ds-cervilla-3: #f6b393; --ds-cervilla-4: #b8461a;
+    --ds-mxen-1: #199e70; --ds-mxen-2: #3fcf96; --ds-mxen-3: #8de3c0;
+    --c2: #f7a3cf; --c3: #c2408a; --c4: #e87ba4;
     color-scheme: dark;
   }
 }
@@ -30,7 +41,12 @@
   --bg: #12151a; --surface: #1a1f26; --ink: #e7ebf0; --muted: #9aa4b2; --line: #2b323c;
   --accent: #f06bb5; --accent-soft: #3a1f30; --ref: #4cc77f; --ref-strong: #b6f0cd;
   --good: #5fcf8b; --good-bg: #173324; --warn: #f0b552; --warn-bg: #3a2c12; --bad: #ff7a70; --bad-bg: #3d1a18;
-  --c2: #6fa2ff; --c3: #f0a83c; --c4: #b88cff;
+  --ds-immucan: #2fa52f; --ds-codex: #3987e5;
+  --ds-spatch-1: #c98500; --ds-spatch-2: #eda100; --ds-spatch-3: #f5c451; --ds-spatch-4: #a86f00;
+  --ds-marteau-1: #6c5ce0; --ds-marteau-2: #a69cf0;
+  --ds-cervilla-1: #d95926; --ds-cervilla-2: #f0855a; --ds-cervilla-3: #f6b393; --ds-cervilla-4: #b8461a;
+  --ds-mxen-1: #199e70; --ds-mxen-2: #3fcf96; --ds-mxen-3: #8de3c0;
+  --c2: #f7a3cf; --c3: #c2408a; --c4: #e87ba4;
     color-scheme: dark;
 }
 body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--f-body); margin: 0; }
@@ -49,6 +65,8 @@ body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--f-body); 
 .dmeta { font-size: 12px; color: var(--muted); }
 .finds, .fails { margin: 0; padding-left: 16px; display: grid; gap: 4px; font-size: 13px; line-height: 1.45; }
 .finds li.f-na { color: var(--muted); }
+.more-finds summary { font-size: 12px; margin-top: 2px; }
+.more-finds .finds { margin-top: 6px; }
 .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }
 .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
 .bar i { display: block; height: 100%; background: var(--accent); transition: width 0.2s; }
